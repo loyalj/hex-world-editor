@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hex World Editor</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="viewport"></div>
+      <aside id="sidebar">
+
+        <div class="panel">
+          <div class="panel-title">File</div>
+          <div class="file-buttons">
+            <button id="save-btn">Save</button>
+            <button id="load-btn">Load</button>
+          </div>
+          <input type="file" id="load-input" accept=".hxmp" style="display:none" />
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">Tools</div>
+          <div id="tool-buttons">
+            <button class="tool-btn active" data-tool="paint-terrain">Paint Terrain</button>
+            <button class="tool-btn" data-tool="raise-elevation">Raise Elev.</button>
+            <button class="tool-btn" data-tool="lower-elevation">Lower Elev.</button>
+            <button class="tool-btn" data-tool="clear-river">Clear River</button>
+          </div>
+          <label class="field" id="terrain-type-field">
+            <span>Terrain Type</span>
+            <select id="terrain-select">
+              <option value="0">Grassland</option>
+              <option value="1">Desert</option>
+              <option value="2">Snow</option>
+              <option value="3">Mud</option>
+              <option value="4">Rock</option>
+              <option value="5">Water</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">Inspector</div>
+          <div id="inspector">
+            <div class="insp-row"><span>Cell</span><span id="insp-pos">—</span></div>
+            <div class="insp-row"><span>Terrain</span><span id="insp-terrain">—</span></div>
+            <div class="insp-row"><span>Elevation</span><span id="insp-elev">—</span></div>
+            <div class="insp-row"><span>River</span><span id="insp-river">—</span></div>
+            <div class="insp-row"><span>Road</span><span id="insp-road">—</span></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">Generate</div>
+          <label class="field">
+            <span>Generator</span>
+            <select id="generator-select"></select>
+          </label>
+          <label class="field">
+            <span>Seed</span>
+            <div class="seed-row">
+              <input id="seed-input" type="number" min="0" max="4294967295" />
+              <button id="new-seed-btn" title="Random seed">&#9861;</button>
+            </div>
+          </label>
+          <div id="config-fields"></div>
+          <button id="regenerate-btn">Regenerate</button>
+        </div>
+
+      </aside>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
