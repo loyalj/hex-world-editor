@@ -4,24 +4,28 @@ import {
   createWaterMaterial, createWaterShoreMaterial,
   createEstuaryMaterial, createRiverMaterial, createRoadMaterial,
   buildTerrainTextureArray, createTerrainMaterial,
+  DEFAULT_TERRAIN_DESCRIPTORS, DEFAULT_TERRAIN_DEFINITIONS,
   RtsCameraController,
   HexHashGrid,
-  pickHexFromMeshes,
-  hexToWorld, hexCorners, offsetToHex,
-} from 'hex-world';
-import type { ScatterLayerConfig } from 'hex-world';
+  pickHexFromMeshes, pickHex,
+  hexToWorld, hexCorners, offsetToHex, hexToOffset, smoothPath, hexRange,
+} from '@loyalj/hex-world';
+import type { ScatterDefinition, HexCoord } from '@loyalj/hex-world';
 
-const MAP_WIDTH   = 100;
-const MAP_HEIGHT  = 100;
-const CHUNK_SIZE  = 32;
-const LOAD_RADIUS = 5;
+const MAP_WIDTH      = 100;
+const MAP_HEIGHT     = 100;
+const CHUNK_SIZE     = 32;
+const LOAD_RADIUS    = 5;
+const WATER_SURFACE_Y = -0.25; // must match waterGeometryOptions.waterLevel
 
 export interface SceneApi {
   map: HexMap;
   chunks: ChunkManager;
   hoveredCell: { col: number; row: number } | null;
+  brushRadius: number;
   reload(): void;
   replaceMap(newMap: HexMap): void;
+  setPathPreview(path: HexCoord[] | null, erasing?: boolean): void;
 }
 
 export async function initScene(container: HTMLElement): Promise<SceneApi> {
@@ -44,7 +48,7 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
   scene.add(ambient, sun);
 
   // Materials
-  const terrainTex = await buildTerrainTextureArray();
+  const terrainTex = await buildTerrainTextureArray(DEFAULT_TERRAIN_DESCRIPTORS);
   const terrainMaterial = createTerrainMaterial(terrainTex, {
     lightDir:   new THREE.Vector3(100, 120, 80),
     lightColor: new THREE.Color(0xfff4d0).multiplyScalar(0.7),
@@ -61,11 +65,16 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
 
   // Scatter — pine trees on 3 density tiers
   const treeMat = new THREE.MeshLambertMaterial({ color: 0x5e8c2a });
-  const pineLayer: ScatterLayerConfig = [
-    [{ geometry: new THREE.ConeGeometry(0.42, 2.0, 7), material: treeMat, yOffset: 1.0 }],
-    [{ geometry: new THREE.ConeGeometry(0.33, 1.5, 7), material: treeMat, yOffset: 0.75 }],
-    [{ geometry: new THREE.ConeGeometry(0.24, 1.0, 7), material: treeMat, yOffset: 0.5 }],
-  ];
+  const pineDefinition: ScatterDefinition = {
+    id:         'pine',
+    name:       'Pine Trees',
+    layerIndex: 0,
+    tiers: [
+      [{ geometry: new THREE.ConeGeometry(0.42, 2.0, 7), material: treeMat, yOffset: 1.0 }],
+      [{ geometry: new THREE.ConeGeometry(0.33, 1.5, 7), material: treeMat, yOffset: 0.75 }],
+      [{ geometry: new THREE.ConeGeometry(0.24, 1.0, 7), material: treeMat, yOffset: 0.5 }],
+    ],
+  };
 
   const map = new HexMap({ width: MAP_WIDTH, height: MAP_HEIGHT, featureLayerCount: 1 });
 
@@ -80,12 +89,13 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
       estuaryMaterial,
       riverMaterial,
       roadMaterial,
+      terrainDefinitions:   DEFAULT_TERRAIN_DEFINITIONS,
       chunkSize:            CHUNK_SIZE,
       loadRadius:           LOAD_RADIUS,
       geometryOptions:      { colorMode: 'splat' },
       waterGeometryOptions: { waterLevel: -0.25 },
       hashGrid,
-      scatterLayers: [pineLayer],
+      scatterDefinitions: [pineDefinition],
     });
   }
 
@@ -108,17 +118,11 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
     renderer.setSize(w, h);
   }).observe(container);
 
-  // Hover indicator — flat translucent hex outline that follows the cursor
-  const indicatorGeo = new THREE.BufferGeometry();
-  const corners = hexCorners(layout, { q: 0, r: 0 });
-  const verts: number[] = [];
-  corners.forEach((c, i) => {
-    const next = corners[(i + 1) % 6];
-    verts.push(0, 0, 0, c.x, 0, c.z, next.x, 0, next.z);
-  });
-  indicatorGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+  // Hover indicator — rebuilt each frame to cover the brush footprint
+  const hoverGeo = new THREE.BufferGeometry();
+  hoverGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
   const hoverMesh = new THREE.Mesh(
-    indicatorGeo,
+    hoverGeo,
     new THREE.MeshBasicMaterial({
       color: 0xffffff, transparent: true, opacity: 0.4,
       depthWrite: false, depthTest: false, side: THREE.DoubleSide,
@@ -127,6 +131,33 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
   hoverMesh.renderOrder = 5;
   hoverMesh.visible = false;
   scene.add(hoverMesh);
+
+  // Road/river start indicator — static single-hex shape, repositioned each frame
+  const startCorners = hexCorners(layout, { q: 0, r: 0 });
+  const startVerts: number[] = [];
+  startCorners.forEach((c, i) => {
+    const next = startCorners[(i + 1) % 6];
+    startVerts.push(0, 0, 0, c.x, 0, c.z, next.x, 0, next.z);
+  });
+  const startGeo = new THREE.BufferGeometry();
+  startGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(startVerts), 3));
+  const startMat = new THREE.MeshBasicMaterial({
+    color: 0xffaa22, transparent: true, opacity: 0.55,
+    depthWrite: false, depthTest: false, side: THREE.DoubleSide,
+  });
+  const startMesh = new THREE.Mesh(startGeo, startMat);
+  startMesh.renderOrder = 5;
+  startMesh.visible = false;
+  scene.add(startMesh);
+
+  // Road path preview line
+  const previewLineGeo = new THREE.BufferGeometry();
+  previewLineGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+  const previewLineMat = new THREE.LineBasicMaterial({ color: 0xffaa22, depthTest: false, depthWrite: false });
+  const previewLine = new THREE.Line(previewLineGeo, previewLineMat);
+  previewLine.renderOrder = 6;
+  previewLine.visible = false;
+  scene.add(previewLine);
 
   // Mouse tracking for picking
   let mouseX = 0;
@@ -140,12 +171,44 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
     map,
     chunks: makeChunks(map),
     hoveredCell: null,
+    brushRadius: 0,
     reload() { api.chunks.dispose(); },
     replaceMap(newMap: HexMap): void {
       api.chunks.dispose();
       api.map    = newMap;
       api.chunks = makeChunks(newMap);
       controls.snapTo(newMap.width / 2, newMap.height / 2);
+    },
+    setPathPreview(path: HexCoord[] | null, erasing = false): void {
+      if (!path || path.length === 0) {
+        startMesh.visible   = false;
+        previewLine.visible = false;
+        return;
+      }
+
+      const color = erasing ? 0xff4444 : 0xffaa22;
+      startMat.color.setHex(color);
+      previewLineMat.color.setHex(color);
+
+      const startOff = hexToOffset(path[0]);
+      const startWp  = hexToWorld(layout, path[0]);
+      startMesh.position.set(startWp.x, api.map.getElevation(startOff.col, startOff.row) * 0.5 + 0.03, startWp.z);
+      startMesh.visible = true;
+
+      if (path.length < 2) {
+        previewLine.visible = false;
+        return;
+      }
+
+      const pts = smoothPath(path, layout, api.map);
+      const positions = new Float32Array(pts.length * 3);
+      pts.forEach((p, i) => {
+        positions[i * 3]     = p.x;
+        positions[i * 3 + 1] = p.y + 0.15;
+        positions[i * 3 + 2] = p.z;
+      });
+      previewLine.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      previewLine.visible = true;
     },
   };
 
@@ -160,16 +223,37 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
     estuaryMaterial.uniforms['uTime'].value = t;
     riverMaterial.uniforms['uTime'].value   = t;
 
-    const picked = pickHexFromMeshes(
+    let picked = pickHexFromMeshes(
       mouseX, mouseY, renderer.domElement, camera, layout, api.map,
       api.chunks.terrainMeshes,
     );
+    // Terrain geometry for underwater cells sits at seabed depth; at a camera
+    // angle the ray hits a shifted position that maps to the wrong surface cell.
+    // Re-pick against the water surface plane to get what the user sees.
+    if (picked && api.map.getElevation(picked.col, picked.row) < 0) {
+      picked = pickHex(mouseX, mouseY, renderer.domElement, camera, layout, api.map, WATER_SURFACE_Y);
+    }
     api.hoveredCell = picked;
 
     if (picked) {
-      const wp = hexToWorld(layout, offsetToHex(picked.col, picked.row));
-      const elev = api.map.getElevation(picked.col, picked.row);
-      hoverMesh.position.set(wp.x, elev * 0.5 + 0.02, wp.z);
+      const cells = hexRange(offsetToHex(picked.col, picked.row), api.brushRadius)
+        .filter(h => {
+          const o = hexToOffset(h);
+          return o.col >= 0 && o.col < api.map.width && o.row >= 0 && o.row < api.map.height;
+        });
+      const verts: number[] = [];
+      for (const hex of cells) {
+        const off = hexToOffset(hex);
+        const elev = api.map.getElevation(off.col, off.row);
+        const y = (elev < 0 ? WATER_SURFACE_Y : elev * 0.5) + 0.02;
+        const center = hexToWorld(layout, hex);
+        const cs = hexCorners(layout, hex);
+        for (let i = 0; i < 6; i++) {
+          const c1 = cs[i], c2 = cs[(i + 1) % 6];
+          verts.push(center.x, y, center.z, c1.x, y, c1.z, c2.x, y, c2.z);
+        }
+      }
+      hoverGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
       hoverMesh.visible = true;
     } else {
       hoverMesh.visible = false;

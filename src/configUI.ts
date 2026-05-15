@@ -1,4 +1,4 @@
-import type { ConfigFieldDescriptor } from 'hex-world';
+import type { ConfigFieldDescriptor } from '@loyalj/hex-world';
 
 export type ConfigObj = Record<string, unknown>;
 

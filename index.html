@@ -8,68 +8,113 @@
   </head>
   <body>
     <div id="app">
-      <div id="viewport"></div>
-      <aside id="sidebar">
 
-        <div class="panel">
-          <div class="panel-title">File</div>
-          <div class="file-buttons">
-            <button id="save-btn">Save</button>
-            <button id="load-btn">Load</button>
-          </div>
+      <div id="ribbon">
+        <div class="ribbon-group">
+          <button id="save-btn" class="ribbon-btn">Save</button>
+          <button id="load-btn" class="ribbon-btn">Load</button>
           <input type="file" id="load-input" accept=".hxmp" style="display:none" />
         </div>
-
-        <div class="panel">
-          <div class="panel-title">Tools</div>
-          <div id="tool-buttons">
-            <button class="tool-btn active" data-tool="paint-terrain">Paint Terrain</button>
-            <button class="tool-btn" data-tool="raise-elevation">Raise Elev.</button>
-            <button class="tool-btn" data-tool="lower-elevation">Lower Elev.</button>
-            <button class="tool-btn" data-tool="clear-river">Clear River</button>
-          </div>
-          <label class="field" id="terrain-type-field">
-            <span>Terrain Type</span>
-            <select id="terrain-select">
-              <option value="0">Grassland</option>
-              <option value="1">Desert</option>
-              <option value="2">Snow</option>
-              <option value="3">Mud</option>
-              <option value="4">Rock</option>
-              <option value="5">Water</option>
-            </select>
-          </label>
+        <div class="ribbon-divider"></div>
+        <div class="ribbon-group" id="tool-buttons">
+          <button class="tool-btn active" data-tool="paint-terrain">Terrain</button>
+          <button class="tool-btn" data-tool="elevation">Elevation</button>
+          <button class="tool-btn" data-tool="paint-river">River</button>
+          <button class="tool-btn" data-tool="paint-road">Road</button>
+          <button class="tool-btn" data-tool="paint-scatter">Scatter</button>
         </div>
-
-        <div class="panel">
-          <div class="panel-title">Inspector</div>
-          <div id="inspector">
-            <div class="insp-row"><span>Cell</span><span id="insp-pos">—</span></div>
-            <div class="insp-row"><span>Terrain</span><span id="insp-terrain">—</span></div>
-            <div class="insp-row"><span>Elevation</span><span id="insp-elev">—</span></div>
-            <div class="insp-row"><span>River</span><span id="insp-river">—</span></div>
-            <div class="insp-row"><span>Road</span><span id="insp-road">—</span></div>
-          </div>
+        <div class="ribbon-spacer"></div>
+        <div class="ribbon-group">
+          <button id="generate-btn" class="ribbon-btn">Generate</button>
         </div>
+      </div>
 
-        <div class="panel">
-          <div class="panel-title">Generate</div>
-          <label class="field">
-            <span>Generator</span>
-            <select id="generator-select"></select>
-          </label>
-          <label class="field">
-            <span>Seed</span>
-            <div class="seed-row">
-              <input id="seed-input" type="number" min="0" max="4294967295" />
-              <button id="new-seed-btn" title="Random seed">&#9861;</button>
+      <div id="main">
+
+        <aside id="left-panel">
+          <div id="terrain-options" class="panel">
+            <div class="panel-title">Terrain Type</div>
+            <div id="terrain-type-group">
+              <button class="terrain-btn active" data-terrain="0" title="Grassland"></button>
+              <button class="terrain-btn"        data-terrain="1" title="Desert"></button>
+              <button class="terrain-btn"        data-terrain="2" title="Snow"></button>
+              <button class="terrain-btn"        data-terrain="3" title="Mud"></button>
+              <button class="terrain-btn"        data-terrain="4" title="Rock"></button>
+              <button class="terrain-btn"        data-terrain="5" title="Water"></button>
             </div>
-          </label>
-          <div id="config-fields"></div>
-          <button id="regenerate-btn">Regenerate</button>
-        </div>
+            <div class="group-header">Brush</div>
+            <div class="brush-group" id="terrain-brush-group">
+              <button class="brush-btn active" data-brush="0" title="1 cell"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"  fill="currentColor"/></svg></button>
+              <button class="brush-btn"        data-brush="1" title="7 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"  fill="currentColor"/></svg></button>
+              <button class="brush-btn"        data-brush="2" title="19 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"  fill="currentColor"/></svg></button>
+              <button class="brush-btn"        data-brush="3" title="37 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="currentColor"/></svg></button>
+            </div>
+          </div>
+          <div id="elevation-options" class="panel hidden">
+            <div class="panel-title">Elevation</div>
+            <label class="field">
+              <span>Step (-5 to 5)</span>
+              <input id="elev-step-input" type="number" min="-5" max="5" value="1" autocomplete="off" />
+            </label>
+            <div class="group-header">Brush</div>
+            <div class="brush-group" id="elev-brush-group">
+              <button class="brush-btn active" data-brush="0" title="1 cell"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"  fill="currentColor"/></svg></button>
+              <button class="brush-btn"        data-brush="1" title="7 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"  fill="currentColor"/></svg></button>
+              <button class="brush-btn"        data-brush="2" title="19 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"  fill="currentColor"/></svg></button>
+              <button class="brush-btn"        data-brush="3" title="37 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="currentColor"/></svg></button>
+            </div>
+          </div>
+          <div id="scatter-options" class="panel hidden">
+            <div class="panel-title">Density</div>
+            <div id="density-group">
+              <button class="density-btn" data-density="0">None</button>
+              <button class="density-btn active" data-density="1">Sparse</button>
+              <button class="density-btn" data-density="2">Medium</button>
+              <button class="density-btn" data-density="3">Dense</button>
+            </div>
+            <div class="group-header">Brush</div>
+            <div class="brush-group" id="scatter-brush-group">
+              <button class="brush-btn active" data-brush="0" title="1 cell"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"  fill="currentColor"/></svg></button>
+              <button class="brush-btn"        data-brush="1" title="7 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"  fill="currentColor"/></svg></button>
+              <button class="brush-btn"        data-brush="2" title="19 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"  fill="currentColor"/></svg></button>
+              <button class="brush-btn"        data-brush="3" title="37 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="currentColor"/></svg></button>
+            </div>
+          </div>
+          <div id="generate-section" class="panel hidden">
+            <div class="panel-title">Generate</div>
+            <label class="field">
+              <span>Generator</span>
+              <select id="generator-select"></select>
+            </label>
+            <label class="field">
+              <span>Seed</span>
+              <div class="seed-row">
+                <input id="seed-input" type="number" min="0" max="4294967295" />
+                <button id="new-seed-btn" title="Random seed">&#9861;</button>
+              </div>
+            </label>
+            <div id="config-fields"></div>
+            <button id="regenerate-btn">Regenerate</button>
+          </div>
+        </aside>
 
-      </aside>
+        <div id="viewport"></div>
+
+        <aside id="right-panel">
+          <div class="panel">
+            <div class="panel-title">Inspector</div>
+            <div id="inspector">
+              <div class="insp-row"><span>Cell</span><span id="insp-pos">—</span></div>
+              <div class="insp-row"><span>Terrain</span><span id="insp-terrain">—</span></div>
+              <div class="insp-row"><span>Elevation</span><span id="insp-elev">—</span></div>
+              <div class="insp-row"><span>River</span><span id="insp-river">—</span></div>
+              <div class="insp-row"><span>Road</span><span id="insp-road">—</span></div>
+              <div class="insp-row"><span>Scatter</span><span id="insp-scatter">—</span></div>
+            </div>
+          </div>
+        </aside>
+
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
