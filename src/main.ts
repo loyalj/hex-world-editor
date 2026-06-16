@@ -1,4 +1,5 @@
-import { FbmPlugin, ChunkPlugin, serializeMap, deserializeMap, hexToOffset, offsetToHex, findPath, offsetNeighbor, POINTY_TOP, hexRange } from '@loyalj/hex-world';
+import { FbmPlugin, ChunkPlugin, HexMap, deserializeMap, serializeMapJSON, deserializeMapJSON, DEFAULT_TERRAIN_DESCRIPTORS, DEFAULT_WATER_TERRAIN_INDEX, DEFAULT_TERRAIN_LOOKUP, hexToOffset, offsetToHex, findPath, offsetNeighbor, POINTY_TOP, hexRange } from '@loyalj/hex-world';
+import { HeightmapPlugin } from './heightmapPlugin.ts';
 import type { HexCoord } from '@loyalj/hex-world';
 import { initScene } from './scene.ts';
 import { CommandHistory } from './history.ts';
@@ -10,41 +11,54 @@ import type { ConfigObj } from './configUI.ts';
 const TERRAIN_NAMES = ['Grassland', 'Desert', 'Snow', 'Mud', 'Rock', 'Water'];
 
 // ---- Generator registry ----
-const PLUGINS = [FbmPlugin, ChunkPlugin];
+const PLUGINS = [FbmPlugin, ChunkPlugin, HeightmapPlugin];
 let activePlugin = PLUGINS[0];
 let activeConfig: ConfigObj = structuredClone(activePlugin.defaultConfig) as ConfigObj;
 
 // ---- DOM refs ----
-const saveBtn       = document.getElementById('save-btn')         as HTMLButtonElement;
-const loadBtn       = document.getElementById('load-btn')         as HTMLButtonElement;
-const loadInput     = document.getElementById('load-input')       as HTMLInputElement;
-const seedInput     = document.getElementById('seed-input')       as HTMLInputElement;
-const genSelect     = document.getElementById('generator-select') as HTMLSelectElement;
-const newSeedBtn    = document.getElementById('new-seed-btn')     as HTMLButtonElement;
-const regenerateBtn = document.getElementById('regenerate-btn')   as HTMLButtonElement;
-const configFields  = document.getElementById('config-fields')    as HTMLDivElement;
-const viewport      = document.getElementById('viewport')         as HTMLDivElement;
+const mapMenuBtn     = document.getElementById('map-menu-btn')     as HTMLButtonElement;
+const mapMenuPanel   = document.getElementById('map-menu-panel')   as HTMLDivElement;
+const saveBtn        = document.getElementById('save-btn')         as HTMLButtonElement;
+const loadBtn        = document.getElementById('load-btn')         as HTMLButtonElement;
+const loadInput      = document.getElementById('load-input')       as HTMLInputElement;
+const newMapBtn      = document.getElementById('new-map-btn')      as HTMLButtonElement;
+const newMapDialog   = document.getElementById('new-map-dialog')   as HTMLDialogElement;
+const dialogCloseBtn = document.getElementById('dialog-close-btn') as HTMLButtonElement;
+const mapWidthInput  = document.getElementById('map-width-input')  as HTMLInputElement;
+const mapHeightInput = document.getElementById('map-height-input') as HTMLInputElement;
+const seedInput      = document.getElementById('seed-input')       as HTMLInputElement;
+const genSelect      = document.getElementById('generator-select') as HTMLSelectElement;
+const newSeedBtn     = document.getElementById('new-seed-btn')     as HTMLButtonElement;
+const configFields   = document.getElementById('config-fields')    as HTMLDivElement;
+const createMapBtn   = document.getElementById('create-map-btn')   as HTMLButtonElement;
+const viewport       = document.getElementById('viewport')         as HTMLDivElement;
 
-const toolButtons     = document.querySelectorAll<HTMLButtonElement>('.tool-btn');
-const terrainBtns     = document.querySelectorAll<HTMLButtonElement>('.terrain-btn');
-const densityBtns     = document.querySelectorAll<HTMLButtonElement>('.density-btn');
-const elevStepInput   = document.getElementById('elev-step-input')  as HTMLInputElement;
-const terrainOptions  = document.getElementById('terrain-options')  as HTMLElement;
-const elevOptions     = document.getElementById('elevation-options') as HTMLElement;
-const scatterOptions  = document.getElementById('scatter-options')  as HTMLElement;
-const generateBtn     = document.getElementById('generate-btn')     as HTMLButtonElement;
-const generateSection = document.getElementById('generate-section') as HTMLElement;
-const leftPanel       = document.getElementById('left-panel')       as HTMLElement;
+const toolButtons    = document.querySelectorAll<HTMLButtonElement>('.tool-btn');
+const terrainBtns    = document.querySelectorAll<HTMLButtonElement>('.terrain-btn');
+const densityBtns    = document.querySelectorAll<HTMLButtonElement>('.density-btn');
+const terrainOptions = document.getElementById('terrain-options')  as HTMLElement;
+const elevOptions    = document.getElementById('elevation-options') as HTMLElement;
+const scatterOptions = document.getElementById('scatter-options')  as HTMLElement;
+const riverOptions   = document.getElementById('river-options')    as HTMLElement;
+const roadOptions     = document.getElementById('road-options')      as HTMLElement;
+const roadCostOptions = document.getElementById('road-cost-options') as HTMLElement;
+const roadCostElev    = document.getElementById('road-cost-elev')    as HTMLInputElement;
+const roadCostTerrain = document.getElementById('road-cost-terrain') as HTMLInputElement;
+const roadCostRoads   = document.getElementById('road-cost-roads')   as HTMLInputElement;
+const leftPanel      = document.getElementById('left-panel')       as HTMLElement;
 
 function updateLeftPanel(): void {
-  const generateOpen  = !generateSection.classList.contains('hidden');
-  const showTerrain   = !generateOpen && activeTool === 'paint-terrain';
-  const showElevation = !generateOpen && activeTool === 'elevation';
-  const showScatter   = !generateOpen && activeTool === 'paint-scatter';
+  const showTerrain   = activeTool === 'paint-terrain';
+  const showElevation = activeTool === 'elevation';
+  const showScatter   = activeTool === 'paint-scatter';
+  const showRiver     = activeTool === 'paint-river';
+  const showRoad      = activeTool === 'paint-road';
   terrainOptions.classList.toggle('hidden', !showTerrain);
   elevOptions.classList.toggle('hidden', !showElevation);
   scatterOptions.classList.toggle('hidden', !showScatter);
-  leftPanel.classList.toggle('hidden', !showTerrain && !showElevation && !showScatter && !generateOpen);
+  riverOptions.classList.toggle('hidden', !showRiver);
+  roadOptions.classList.toggle('hidden', !showRoad);
+  leftPanel.classList.toggle('hidden', !showTerrain && !showElevation && !showScatter && !showRiver && !showRoad);
 }
 
 const inspPos     = document.getElementById('insp-pos')     as HTMLElement;
@@ -84,16 +98,51 @@ newSeedBtn.addEventListener('click', () => {
 const scene   = await initScene(viewport);
 const history = new CommandHistory();
 
-activePlugin.generate(scene.map, activePlugin.defaultConfig, initialSeed);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+activePlugin.generate(scene.map, activePlugin.defaultConfig as any, initialSeed);
 scene.reload();
 refreshConfigFields();
 
 // ---- Tool state ----
-type ToolId = 'paint-terrain' | 'elevation' | 'paint-river' | 'paint-road' | 'paint-scatter';
-let activeTool        : ToolId = 'paint-terrain';
-let paintTerrainType  : number = 0;       // Grassland
-let paintScatterLevel : number = 1;       // Sparse
-let elevStep          : number = 1;
+type ToolId    = 'paint-terrain' | 'elevation' | 'paint-river' | 'paint-road' | 'paint-scatter';
+type RoadMode  = 'path' | 'straight';
+let activeTool        : ToolId   = 'paint-terrain';
+let paintTerrainType  : number   = 0;       // Grassland
+let paintScatterLevel : number   = 1;       // Sparse
+let elevStep          : number   = 1;
+let roadMode          : RoadMode = 'path';
+let riverMode         : RoadMode = 'path';
+
+function hexRound(fq: number, fr: number): HexCoord {
+  const fs = -fq - fr;
+  let q = Math.round(fq);
+  let r = Math.round(fr);
+  const s = Math.round(fs);
+  const dq = Math.abs(q - fq);
+  const dr = Math.abs(r - fr);
+  const ds = Math.abs(s - fs);
+  if (dq > dr && dq > ds) q = -r - s;
+  else if (dr > ds) r = -q - s;
+  return { q, r };
+}
+
+function hexLineDraw(start: HexCoord, end: HexCoord): HexCoord[] {
+  const n = Math.max(
+    Math.abs(end.q - start.q),
+    Math.abs(end.r - start.r),
+    Math.abs((-end.q - end.r) - (-start.q - start.r)),
+  );
+  if (n === 0) return [start];
+  const result: HexCoord[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    result.push(hexRound(
+      start.q + (end.q - start.q) * t,
+      start.r + (end.r - start.r) * t,
+    ));
+  }
+  return result;
+}
 
 // Per-tool brush radius (0 = single cell)
 let terrainBrushRadius : number = 0;
@@ -119,9 +168,6 @@ toolButtons.forEach(btn => {
     toolButtons.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     scene.brushRadius = activeBrushRadius();
-    // Switching tools closes the generate panel
-    generateSection.classList.add('hidden');
-    generateBtn.classList.remove('active');
     updateLeftPanel();
   });
 });
@@ -158,20 +204,43 @@ wireBrushGroup('terrain-brush-group', r => { terrainBrushRadius = r; });
 wireBrushGroup('elev-brush-group',    r => { elevBrushRadius    = r; });
 wireBrushGroup('scatter-brush-group', r => { scatterBrushRadius = r; });
 
-elevStepInput.value = String(elevStep);
-
-elevStepInput.addEventListener('change', () => {
-  const v = parseInt(elevStepInput.value, 10);
-  elevStep = Number.isFinite(v) ? Math.max(-5, Math.min(5, v)) : 1;
-  elevStepInput.value = String(elevStep);
+const elevStepBtns = document.querySelectorAll<HTMLButtonElement>('#elev-step-group .brush-btn');
+elevStepBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    elevStep = parseInt(btn.dataset['step']!, 10);
+    elevStepBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
 });
 
-generateBtn.addEventListener('click', () => {
-  const opening = generateSection.classList.contains('hidden');
-  generateSection.classList.toggle('hidden', !opening);
-  generateBtn.classList.toggle('active', opening);
-  updateLeftPanel();
+const riverModeBtns = document.querySelectorAll<HTMLButtonElement>('#river-mode-group .brush-btn');
+riverModeBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    riverMode = btn.dataset['riverMode'] as RoadMode;
+    riverModeBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
 });
+
+const roadModeBtns = document.querySelectorAll<HTMLButtonElement>('#road-mode-group .brush-btn');
+roadModeBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    roadMode = btn.dataset['roadMode'] as RoadMode;
+    roadModeBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    roadCostOptions.classList.toggle('hidden', roadMode !== 'path');
+  });
+});
+
+mapMenuBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  mapMenuPanel.classList.toggle('hidden');
+});
+document.addEventListener('click', () => mapMenuPanel.classList.add('hidden'));
+
+newMapBtn.addEventListener('click', () => newMapDialog.showModal());
+dialogCloseBtn.addEventListener('click', () => newMapDialog.close());
+newMapDialog.addEventListener('click', e => { if (e.target === newMapDialog) newMapDialog.close(); });
 
 // ---- Stroke state ----
 type PaintEdit     = { col: number; row: number; prevTerrain: number; nextTerrain: number; prevElev: number | null; nextElev: number | null };
@@ -179,7 +248,7 @@ type ElevEdit      = { col: number; row: number; prev: number; next: number };
 type RiverPaintEdit = { col: number; row: number; prevIncoming: number; prevOutgoing: number; nextIncoming: number; nextOutgoing: number };
 type RoadEdit      = { col: number; row: number; edge: number; nCol: number; nRow: number; nEdge: number; prevSet: boolean; prevNSet: boolean };
 
-const WATER_TERRAIN = 5;
+const WATER_TERRAIN = DEFAULT_WATER_TERRAIN_INDEX;
 
 let isPointerDown  = false;
 let strokePaint    : PaintEdit[] = [];
@@ -210,22 +279,52 @@ function edgeBetween(fromCol: number, fromRow: number, toCol: number, toRow: num
 function updatePathPreview(): void {
   if (!pathStart) return;
   const end = scene.hoveredCell ?? pathStart;
+  const startHex = offsetToHex(pathStart.col, pathStart.row);
+  const endHex   = offsetToHex(end.col, end.row);
   if (end.col === pathStart.col && end.row === pathStart.row) {
     currentPath = null;
-    scene.setPathPreview([offsetToHex(pathStart.col, pathStart.row)], pathErasing);
+    scene.setPathPreview([startHex], pathErasing);
     return;
   }
-  const path = findPath(
-    offsetToHex(pathStart.col, pathStart.row),
-    offsetToHex(end.col, end.row),
-    (_from, to) => {
-      const off = hexToOffset(to);
-      return scene.map.getTerrain(off.col, off.row) === WATER_TERRAIN ? Infinity : 1;
-    },
-    scene.map,
-  );
+  let path: HexCoord[] | null;
+  const activeMode = activeTool === 'paint-road' ? roadMode : riverMode;
+  if (activeMode === 'straight') {
+    path = hexLineDraw(startHex, endHex);
+  } else {
+    path = findPath(
+      startHex,
+      endHex,
+      (from, to) => {
+        const toOff = hexToOffset(to);
+        if (scene.map.getTerrain(toOff.col, toOff.row) === WATER_TERRAIN) return Infinity;
+
+        let cost = 1;
+
+        if (roadCostElev.checked) {
+          const fromOff = hexToOffset(from);
+          const diff = Math.abs(
+            scene.map.getElevation(toOff.col, toOff.row) -
+            scene.map.getElevation(fromOff.col, fromOff.row),
+          );
+          cost += diff * 1.5;
+        }
+
+        if (roadCostTerrain.checked) {
+          const def = DEFAULT_TERRAIN_LOOKUP.get(scene.map.getTerrain(toOff.col, toOff.row));
+          cost += (def?.roadCost ?? 1) - 1;
+        }
+
+        if (roadCostRoads.checked && scene.map.hasRoads(toOff.col, toOff.row)) {
+          cost *= 0.25;
+        }
+
+        return cost;
+      },
+      scene.map,
+    );
+  }
   currentPath = path;
-  scene.setPathPreview(path ?? [offsetToHex(pathStart.col, pathStart.row)], pathErasing);
+  scene.setPathPreview(path ?? [startHex], pathErasing);
 }
 
 function applyBrush(col: number, row: number): void {
@@ -251,7 +350,7 @@ function applyTool(col: number, row: number): void {
       if (prevTerrain === paintTerrainType) return;
       const prevElev = map.getElevation(col, row);
       let nextElev: number | null = null;
-      if (paintTerrainType !== WATER_TERRAIN && prevElev < 0) {
+      if (paintTerrainType !== WATER_TERRAIN && prevTerrain === WATER_TERRAIN && prevElev < 0) {
         nextElev = 0;
       }
       map.setTerrain(col, row, paintTerrainType);
@@ -432,11 +531,12 @@ updateInspector();
 
 // ---- Save / Load ----
 saveBtn.addEventListener('click', () => {
-  const bytes = serializeMap(scene.map);
-  const url   = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer], { type: 'application/octet-stream' }));
-  const a     = document.createElement('a');
+  const seed = parseInt(seedInput.value, 10) >>> 0;
+  const json = serializeMapJSON(scene.map, { generatorId: activePlugin.id, seed }, undefined, DEFAULT_TERRAIN_DESCRIPTORS);
+  const url  = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  const a    = document.createElement('a');
   a.href     = url;
-  a.download = 'map.hxmp';
+  a.download = 'map.hexmap.json';
   a.click();
   URL.revokeObjectURL(url);
 });
@@ -447,20 +547,41 @@ loadInput.addEventListener('change', async () => {
   const file = loadInput.files?.[0];
   if (!file) return;
   loadInput.value = '';
-  let loaded;
   try {
-    loaded = deserializeMap(new Uint8Array(await file.arrayBuffer()));
+    let loaded: HexMap;
+    if (file.name.endsWith('.json')) {
+      const result = deserializeMapJSON(await file.text());
+      loaded = result.map;
+      if (result.metadata.seed !== undefined) seedInput.value = String(result.metadata.seed);
+      if (result.metadata.generatorId) {
+        const plugin = PLUGINS.find(p => p.id === result.metadata.generatorId);
+        if (plugin) {
+          activePlugin    = plugin;
+          genSelect.value = plugin.id;
+          activeConfig    = structuredClone(plugin.defaultConfig) as ConfigObj;
+          refreshConfigFields();
+        }
+      }
+    } else {
+      loaded = deserializeMap(new Uint8Array(await file.arrayBuffer()));
+    }
+    scene.replaceMap(loaded);
+    history.clear();
   } catch (err) {
     alert(`Failed to load map: ${err instanceof Error ? err.message : String(err)}`);
-    return;
   }
-  scene.replaceMap(loaded);
-  history.clear();
 });
 
 // ---- Keyboard shortcuts ----
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+  if (e.key === 'Escape') {
+    if (isPointerDown && (activeTool === 'paint-road' || activeTool === 'paint-river')) {
+      scene.setPathPreview(null);
+      pathStart     = null;
+      currentPath   = null;
+      isPointerDown = false;
+    }
+  } else if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
     e.preventDefault();
     history.undo();
   } else if (
@@ -472,20 +593,29 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// ---- Regenerate ----
-regenerateBtn.addEventListener('click', async () => {
-  const seed = (parseInt(seedInput.value, 10) >>> 0);
+// ---- Create Map ----
+createMapBtn.addEventListener('click', async () => {
+  if (activePlugin.id === 'heightmap' && !(activeConfig as { image: unknown }).image) {
+    alert('Please choose a heightmap image first.');
+    return;
+  }
 
-  regenerateBtn.disabled    = true;
-  regenerateBtn.textContent = 'Generating…';
+  const width  = Math.max(10, parseInt(mapWidthInput.value,  10) || 100);
+  const height = Math.max(10, parseInt(mapHeightInput.value, 10) || 100);
+  const seed   = parseInt(seedInput.value, 10) >>> 0;
+
+  createMapBtn.disabled    = true;
+  createMapBtn.textContent = 'Generating…';
 
   await new Promise<void>(r => setTimeout(r, 0));
 
-  scene.map.clear();
-  activePlugin.generate(scene.map, activeConfig, seed);
-  scene.reload();
+  const newMap = new HexMap({ width, height, featureLayerCount: 1 });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  activePlugin.generate(newMap, activeConfig as any, seed);
+  scene.replaceMap(newMap);
   history.clear();
 
-  regenerateBtn.disabled    = false;
-  regenerateBtn.textContent = 'Regenerate';
+  createMapBtn.disabled    = false;
+  createMapBtn.textContent = 'Create Map';
+  newMapDialog.close();
 });

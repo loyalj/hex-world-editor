@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import {
   HexMap, ChunkManager, createLayout, POINTY_TOP,
-  createWaterMaterial, createWaterShoreMaterial,
-  createEstuaryMaterial, createRiverMaterial, createRoadMaterial,
+  createRoadMaterial,
   buildTerrainTextureArray, createTerrainMaterial,
   DEFAULT_TERRAIN_DESCRIPTORS, DEFAULT_TERRAIN_DEFINITIONS,
+  DEFAULT_LIQUID_DESCRIPTORS, resolveLiquidMaterials, buildWaterTerrainSet,
   RtsCameraController,
   HexHashGrid,
   pickHexFromMeshes, pickHex,
@@ -12,11 +12,13 @@ import {
 } from '@loyalj/hex-world';
 import type { ScatterDefinition, HexCoord } from '@loyalj/hex-world';
 
-const MAP_WIDTH      = 100;
-const MAP_HEIGHT     = 100;
-const CHUNK_SIZE     = 32;
-const LOAD_RADIUS    = 5;
-const WATER_SURFACE_Y = -0.25; // must match waterGeometryOptions.waterLevel
+const MAP_WIDTH    = 100;
+const MAP_HEIGHT   = 100;
+const CHUNK_SIZE   = 32;
+const LOAD_RADIUS  = 5;
+const ELEV_SCALE   = 0.5;
+const WATER_TERRAIN_SET = buildWaterTerrainSet(DEFAULT_TERRAIN_DEFINITIONS);
+const isWaterTerrain = (terrain: number) => WATER_TERRAIN_SET.has(terrain);
 
 export interface SceneApi {
   map: HexMap;
@@ -54,10 +56,7 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
     lightColor: new THREE.Color(0xfff4d0).multiplyScalar(0.7),
     ambient:    new THREE.Color(0xd0e0ff).multiplyScalar(0.45),
   });
-  const waterMaterial   = createWaterMaterial();
-  const shoreMaterial   = createWaterShoreMaterial();
-  const estuaryMaterial = createEstuaryMaterial();
-  const riverMaterial   = createRiverMaterial();
+  const liquidMaterials = new Map(DEFAULT_LIQUID_DESCRIPTORS.map(d => [d.id, resolveLiquidMaterials(d)]));
   const roadMaterial    = createRoadMaterial();
 
   const layout   = createLayout(POINTY_TOP, 1);
@@ -84,16 +83,14 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
       layout,
       scene,
       material:             terrainMaterial,
-      waterMaterial,
-      shoreMaterial,
-      estuaryMaterial,
-      riverMaterial,
+      liquidMaterials,
+      liquidDescriptors:    DEFAULT_LIQUID_DESCRIPTORS,
       roadMaterial,
       terrainDefinitions:   DEFAULT_TERRAIN_DEFINITIONS,
       chunkSize:            CHUNK_SIZE,
       loadRadius:           LOAD_RADIUS,
       geometryOptions:      { colorMode: 'splat' },
-      waterGeometryOptions: { waterLevel: -0.25 },
+      waterGeometryOptions: {},
       hashGrid,
       scatterDefinitions: [pineDefinition],
     });
@@ -129,6 +126,7 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
     }),
   );
   hoverMesh.renderOrder = 5;
+  hoverMesh.frustumCulled = false;
   hoverMesh.visible = false;
   scene.add(hoverMesh);
 
@@ -156,13 +154,17 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
   const previewLineMat = new THREE.LineBasicMaterial({ color: 0xffaa22, depthTest: false, depthWrite: false });
   const previewLine = new THREE.Line(previewLineGeo, previewLineMat);
   previewLine.renderOrder = 6;
+  previewLine.frustumCulled = false;
   previewLine.visible = false;
   scene.add(previewLine);
 
-  // Mouse tracking for picking
+  // Mouse tracking — window-level so coordinates stay current even while the
+  // camera controller is handling drag events on the canvas.
   let mouseX = 0;
   let mouseY = 0;
-  renderer.domElement.addEventListener('pointermove', e => {
+  let lastPicked: { col: number; row: number } | null = null;
+  let lastPickedFrames = 0;
+  window.addEventListener('pointermove', e => {
     mouseX = e.clientX;
     mouseY = e.clientY;
   });
@@ -192,7 +194,10 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
 
       const startOff = hexToOffset(path[0]);
       const startWp  = hexToWorld(layout, path[0]);
-      startMesh.position.set(startWp.x, api.map.getElevation(startOff.col, startOff.row) * 0.5 + 0.03, startWp.z);
+      const startSurfElev = isWaterTerrain(api.map.getTerrain(startOff.col, startOff.row))
+        ? api.map.getWaterSurface(startOff.col, startOff.row)
+        : api.map.getElevation(startOff.col, startOff.row);
+      startMesh.position.set(startWp.x, startSurfElev * ELEV_SCALE + 0.03, startWp.z);
       startMesh.visible = true;
 
       if (path.length < 2) {
@@ -212,27 +217,61 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
     },
   };
 
+  let lastFrameTime = performance.now();
   function animate() {
     requestAnimationFrame(animate);
+    const now = performance.now();
+    const dt  = (now - lastFrameTime) / 1000;
+    lastFrameTime = now;
     controls.update();
-    api.chunks.update(camera);
+    api.chunks.update(camera, dt);
 
-    const t = performance.now() / 1000;
-    waterMaterial.uniforms['uTime'].value   = t;
-    shoreMaterial.uniforms['uTime'].value   = t;
-    estuaryMaterial.uniforms['uTime'].value = t;
-    riverMaterial.uniforms['uTime'].value   = t;
-
+    // Mesh pick is most accurate but only hits loaded chunks. Fall back to a
+    // flat-plane pick at y=0 so the hover survives the brief window while
+    // newly-panned-to chunks are still building.
     let picked = pickHexFromMeshes(
       mouseX, mouseY, renderer.domElement, camera, layout, api.map,
       api.chunks.terrainMeshes,
-    );
-    // Terrain geometry for underwater cells sits at seabed depth; at a camera
+    ) ?? pickHex(mouseX, mouseY, renderer.domElement, camera, layout, api.map, 0);
+
+    // Terrain geometry for water cells sits at seabed depth; at a camera
     // angle the ray hits a shifted position that maps to the wrong surface cell.
-    // Re-pick against the water surface plane to get what the user sees.
-    if (picked && api.map.getElevation(picked.col, picked.row) < 0) {
-      picked = pickHex(mouseX, mouseY, renderer.domElement, camera, layout, api.map, WATER_SURFACE_Y);
+    // Re-pick against the per-cell water surface plane to get what the user sees.
+    // Keep the original pick if the re-pick misses (e.g. at a shallow angle).
+    if (picked && isWaterTerrain(api.map.getTerrain(picked.col, picked.row))) {
+      const surfaceY = api.map.getWaterSurface(picked.col, picked.row) * ELEV_SCALE;
+      picked = pickHex(mouseX, mouseY, renderer.domElement, camera, layout, api.map, surfaceY) ?? picked;
     }
+
+    // If both picks failed but we have a recent valid pick, retry at that cell's
+    // elevation. Elevated edge tiles appear above y=0, so the flat-plane pick at
+    // y=0 can land outside the map bounds; the elevation retry corrects this.
+    if (!picked && lastPicked) {
+      const lastElev = api.map.getElevation(lastPicked.col, lastPicked.row) * ELEV_SCALE;
+      if (lastElev > 0.01) {
+        picked = pickHex(mouseX, mouseY, renderer.domElement, camera, layout, api.map, lastElev) ?? null;
+      }
+    }
+
+    // If all picks failed, hold the last valid result for a few frames so the
+    // hover doesn't flicker off during brief geometry gaps (chunk edges, shallow
+    // camera angles). Only while the cursor is actually inside the canvas.
+    if (picked) {
+      lastPicked       = picked;
+      lastPickedFrames = 0;
+    } else {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const overCanvas = mouseX >= rect.left && mouseX <= rect.right
+                      && mouseY >= rect.top  && mouseY <= rect.bottom;
+      if (overCanvas && lastPickedFrames < 4) {
+        picked = lastPicked;
+        lastPickedFrames++;
+      } else {
+        lastPicked       = null;
+        lastPickedFrames = 0;
+      }
+    }
+
     api.hoveredCell = picked;
 
     if (picked) {
@@ -245,7 +284,9 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
       for (const hex of cells) {
         const off = hexToOffset(hex);
         const elev = api.map.getElevation(off.col, off.row);
-        const y = (elev < 0 ? WATER_SURFACE_Y : elev * 0.5) + 0.02;
+        const y = (isWaterTerrain(api.map.getTerrain(off.col, off.row))
+          ? api.map.getWaterSurface(off.col, off.row) * ELEV_SCALE
+          : elev * ELEV_SCALE) + 0.02;
         const center = hexToWorld(layout, hex);
         const cs = hexCorners(layout, hex);
         for (let i = 0; i < 6; i++) {
