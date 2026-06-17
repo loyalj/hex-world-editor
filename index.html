@@ -17,15 +17,24 @@
             <button class="menu-item" id="save-btn">Save</button>
             <button class="menu-item" id="load-btn">Load</button>
             <input type="file" id="load-input" accept=".hxmp,.json" style="display:none" />
+            <div class="menu-divider"></div>
+            <button class="menu-item" id="export-pack-btn">Export Pack</button>
+            <button class="menu-item" id="open-pack-btn">Open Pack</button>
+            <input type="file" id="open-pack-input" accept=".hexpack" style="display:none" />
           </div>
         </div>
         <div class="ribbon-divider"></div>
+        <div class="ribbon-group">
+          <button class="ribbon-btn icon-btn" id="undo-btn" title="Undo (Ctrl+Z)" disabled>↺</button>
+          <button class="ribbon-btn icon-btn" id="redo-btn" title="Redo (Ctrl+Y)" disabled>↻</button>
+        </div>
+        <div class="ribbon-divider"></div>
         <div class="ribbon-group" id="tool-buttons">
-          <button class="tool-btn active" data-tool="paint-terrain">Terrain</button>
-          <button class="tool-btn" data-tool="elevation">Elevation</button>
-          <button class="tool-btn" data-tool="paint-river">River</button>
-          <button class="tool-btn" data-tool="paint-road">Road</button>
-          <button class="tool-btn" data-tool="paint-scatter">Scatter</button>
+          <button class="tool-btn active" data-tool="paint-terrain">Terrain <kbd class="key-hint">1</kbd></button>
+          <button class="tool-btn" data-tool="elevation">Elevation <kbd class="key-hint">2</kbd></button>
+          <button class="tool-btn" data-tool="paint-river">River <kbd class="key-hint">3</kbd></button>
+          <button class="tool-btn" data-tool="paint-road">Road <kbd class="key-hint">4</kbd></button>
+          <button class="tool-btn" data-tool="paint-scatter">Scatter <kbd class="key-hint">5</kbd></button>
         </div>
         <div class="ribbon-spacer"></div>
       </div>
@@ -36,12 +45,13 @@
           <div id="terrain-options" class="panel">
             <div class="panel-title">Terrain Type</div>
             <div id="terrain-type-group">
-              <button class="terrain-btn active" data-terrain="0" title="Grassland"></button>
-              <button class="terrain-btn"        data-terrain="1" title="Desert"></button>
-              <button class="terrain-btn"        data-terrain="2" title="Snow"></button>
-              <button class="terrain-btn"        data-terrain="3" title="Mud"></button>
-              <button class="terrain-btn"        data-terrain="4" title="Rock"></button>
-              <button class="terrain-btn"        data-terrain="5" title="Water"></button>
+              <!-- populated by renderTerrainPalette() in main.ts -->
+            </div>
+            <p class="tool-hint">Alt+click to sample. Click <span class="lock-hint">🔒</span> to lock.</p>
+            <div class="group-header">Mode</div>
+            <div id="terrain-mode-group">
+              <button class="scatter-type-btn active" data-terrain-mode="brush" title="Paint with brush">Brush</button>
+              <button class="scatter-type-btn" data-terrain-mode="fill" title="Flood fill connected region">Fill</button>
             </div>
             <div class="group-header">Brush</div>
             <div class="brush-group" id="terrain-brush-group">
@@ -53,7 +63,21 @@
           </div>
           <div id="elevation-options" class="panel hidden">
             <div class="panel-title">Elevation</div>
-            <div class="group-header">Step</div>
+            <div class="group-header">Mode</div>
+            <div id="elev-mode-group">
+              <button class="density-btn active" data-elev-mode="raise-lower">Raise / Lower</button>
+              <button class="density-btn" data-elev-mode="smooth">Smooth</button>
+              <button class="density-btn" data-elev-mode="flatten">Flatten to target</button>
+              <button class="density-btn" data-elev-mode="noise">Noise</button>
+              <button class="density-btn" data-elev-mode="set-absolute">Set absolute</button>
+              <button class="density-btn" data-elev-mode="slope">Slope ramp</button>
+              <button class="density-btn" data-elev-mode="erosion">Erosion</button>
+            </div>
+            <div id="elev-set-target-row" class="field hidden">
+              <span>Target elevation</span>
+              <input type="number" id="elev-set-target" value="0" min="-128" max="127" autocomplete="off" />
+            </div>
+            <div class="group-header" id="elev-step-header">Step</div>
             <div class="brush-group" id="elev-step-group">
               <button class="brush-btn" data-step="-2" title="Lower by 2">
                 <svg viewBox="0 0 24 24">
@@ -82,6 +106,12 @@
                 </svg>
               </button>
             </div>
+            <div class="group-header">Range Lock</div>
+            <div class="elev-range-row">
+              <label class="elev-range-label">Min<input type="number" id="elev-range-min" value="-128" min="-128" max="127" autocomplete="off" /></label>
+              <label class="elev-range-label">Max<input type="number" id="elev-range-max" value="127"  min="-128" max="127" autocomplete="off" /></label>
+            </div>
+            <p class="tool-hint">Ctrl: snap to contour</p>
             <div class="group-header">Brush</div>
             <div class="brush-group" id="elev-brush-group">
               <button class="brush-btn active" data-brush="0" title="1 cell"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"  fill="currentColor"/></svg></button>
@@ -91,7 +121,13 @@
             </div>
           </div>
           <div id="scatter-options" class="panel hidden">
-            <div class="panel-title">Density</div>
+            <div class="panel-title">Scatter</div>
+            <div class="group-header">Type</div>
+            <div id="scatter-type-group">
+              <button class="scatter-type-btn active" data-scatter-layer="0">Trees</button>
+              <button class="scatter-type-btn"        data-scatter-layer="1">Rocks</button>
+            </div>
+            <div class="group-header">Density</div>
             <div id="density-group">
               <button class="density-btn" data-density="0">None</button>
               <button class="density-btn active" data-density="1">Sparse</button>
@@ -107,26 +143,20 @@
             </div>
           </div>
           <div id="river-options" class="panel hidden">
-            <div class="panel-title">Mode</div>
-            <div class="brush-group" id="river-mode-group">
-              <button class="brush-btn active" data-river-mode="path" title="Pathfinding">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <path d="M4,19 C4,11 20,13 20,5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                  <circle cx="4"  cy="19" r="2.5" fill="currentColor"/>
-                  <circle cx="20" cy="5"  r="2.5" fill="currentColor"/>
-                </svg>
-              </button>
-              <button class="brush-btn" data-river-mode="straight" title="Straight line">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <line x1="4" y1="19" x2="20" y2="5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                  <circle cx="4"  cy="19" r="2.5" fill="currentColor"/>
-                  <circle cx="20" cy="5"  r="2.5" fill="currentColor"/>
-                </svg>
-              </button>
+            <div class="panel-title">River</div>
+            <div class="group-header">Mode</div>
+            <div id="river-mode-group">
+              <button class="density-btn active" data-river-mode="path">Path</button>
+              <button class="density-btn" data-river-mode="straight">Straight</button>
+              <button class="density-btn" data-river-mode="waypoint">Waypoints</button>
+              <button class="density-btn" data-river-mode="downhill">Downhill trace</button>
+              <button class="density-btn" data-river-mode="erase">Erase</button>
             </div>
+            <p class="tool-hint" id="river-hint">Hold and drag to place. Shift to erase. <kbd>Esc</kbd> cancels.</p>
           </div>
           <div id="road-options" class="panel hidden">
             <div class="panel-title">Mode</div>
+            <p class="tool-hint">Click start → click end to place. <kbd>Esc</kbd> cancels.</p>
             <div class="brush-group" id="road-mode-group">
               <button class="brush-btn active" data-road-mode="path" title="Pathfinding">
                 <svg viewBox="0 0 24 24" fill="none">
@@ -173,7 +203,8 @@
               <div class="insp-row"><span>Elevation</span><span id="insp-elev">—</span></div>
               <div class="insp-row"><span>River</span><span id="insp-river">—</span></div>
               <div class="insp-row"><span>Road</span><span id="insp-road">—</span></div>
-              <div class="insp-row"><span>Scatter</span><span id="insp-scatter">—</span></div>
+              <div class="insp-row"><span>Trees</span><span id="insp-scatter-trees">—</span></div>
+              <div class="insp-row"><span>Rocks</span><span id="insp-scatter-rocks">—</span></div>
             </div>
           </div>
         </aside>
@@ -207,6 +238,47 @@
         </label>
         <div id="config-fields"></div>
         <button id="create-map-btn">Create Map</button>
+      </div>
+    </dialog>
+    <dialog id="add-terrain-dialog">
+      <div class="dialog-header">
+        <span class="dialog-title" id="terrain-dialog-title">Add Terrain Type</span>
+        <button class="dialog-close" id="add-terrain-close-btn">&#x2715;</button>
+      </div>
+      <div class="dialog-body">
+        <label class="field">
+          <span>Name</span>
+          <input id="add-terrain-name" type="text" placeholder="e.g. Jungle" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Color</span>
+          <div class="color-row">
+            <input id="add-terrain-color" type="color" value="#7a8a6a" />
+            <span id="add-terrain-color-label" class="color-hex-label">#7a8a6a</span>
+          </div>
+        </label>
+        <label class="field">
+          <span>Texture <span class="field-hint">(optional)</span></span>
+          <div class="image-picker">
+            <input type="file" id="add-terrain-img-input" accept="image/*" style="display:none" />
+            <button type="button" class="image-pick-btn" id="add-terrain-img-btn">Choose image…</button>
+            <span class="image-pick-status" id="add-terrain-img-status">No image</span>
+          </div>
+        </label>
+        <label class="field">
+          <span>Road cost <span class="field-hint">(1 = normal)</span></span>
+          <input id="add-terrain-cost" type="number" min="0.1" max="20" step="0.1" value="1" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Liquid type <span class="field-hint">(optional)</span></span>
+          <select id="add-terrain-liquid">
+            <option value="">&#8212; solid &#8212;</option>
+            <option value="water">Water</option>
+            <option value="lava">Lava</option>
+            <option value="acid">Acid</option>
+          </select>
+        </label>
+        <button id="add-terrain-confirm-btn">Add Terrain</button>
       </div>
     </dialog>
     <script type="module" src="/src/main.ts"></script>

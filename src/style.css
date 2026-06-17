@@ -106,6 +106,18 @@ body {
   color: #c8c8d4;
 }
 
+.ribbon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+  pointer-events: none;
+}
+
+.ribbon-btn.icon-btn {
+  padding: 0 8px;
+  font-size: 16px;
+  line-height: 1;
+}
+
 /* ---- Tool buttons (live in ribbon) ---- */
 
 .tool-btn {
@@ -132,6 +144,26 @@ body {
   color: #c8c8d4;
 }
 
+kbd.key-hint {
+  display: inline-block;
+  font-family: inherit;
+  font-size: 9px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  padding: 0 3px;
+  margin-left: 2px;
+  color: #4a4a6a;
+  vertical-align: middle;
+  line-height: 1.6;
+}
+
+.tool-btn:hover kbd.key-hint,
+.tool-btn.active kbd.key-hint {
+  color: #7a7a9a;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
 /* ---- Terrain type swatches ---- */
 
 #terrain-type-group {
@@ -145,19 +177,129 @@ body {
   border-radius: 5px;
   border: 2px solid transparent;
   cursor: pointer;
-  padding: 0;
+  padding: 0 0 4px;
   width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  position: relative;
 }
 
-.terrain-btn[data-terrain="0"] { background: #4a7a2a; }
-.terrain-btn[data-terrain="1"] { background: #c8a44a; }
-.terrain-btn[data-terrain="2"] { background: #c0d4e8; }
-.terrain-btn[data-terrain="3"] { background: #7a5838; }
-.terrain-btn[data-terrain="4"] { background: #787878; }
-.terrain-btn[data-terrain="5"] { background: #2a6098; }
+.terrain-btn--custom::after {
+  content: '✎';
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  font-size: 9px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.45);
+  pointer-events: none;
+}
 
 .terrain-btn:hover  { border-color: #9090a8; }
 .terrain-btn.active { border-color: #ffffff; }
+
+.terrain-name {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
+  pointer-events: none;
+  line-height: 1;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 3px;
+}
+
+.add-terrain-btn {
+  background: #1a1a2e !important;
+  border: 2px dashed #3a3a5a !important;
+  color: #5a5a7a;
+  font-size: 20px;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.add-terrain-btn:hover {
+  border-color: #6b6baa !important;
+  color: #9090a8;
+}
+
+.menu-divider {
+  height: 1px;
+  background: #2a2a3e;
+  margin: 3px 0;
+}
+
+.color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+input[type="color"] {
+  width: 40px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid #2a2a3e;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.color-hex-label {
+  font-size: 12px;
+  color: #9090a8;
+  font-variant-numeric: tabular-nums;
+  font-family: monospace;
+}
+
+.field-hint {
+  font-size: 10px;
+  color: #4a4a6a;
+  font-weight: 400;
+}
+
+.field input[type="text"],
+.field input[type="number"],
+.field select {
+  background: #1e1e30;
+  border: 1px solid #2a2a3e;
+  color: #c8c8d4;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 13px;
+  width: 100%;
+}
+
+.field input[type="text"]:focus,
+.field input[type="number"]:focus,
+.field select:focus {
+  outline: none;
+  border-color: #4a4aff;
+}
+
+#add-terrain-confirm-btn {
+  background: #3d3dcc;
+  border: none;
+  color: #fff;
+  border-radius: 4px;
+  padding: 7px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  width: 100%;
+  margin-top: 2px;
+}
+
+#add-terrain-confirm-btn:hover    { background: #5555dd; }
+#add-terrain-confirm-btn:disabled { background: #252540; color: #5a5a7a; cursor: default; }
 
 /* ---- Brush size buttons ---- */
 
@@ -184,6 +326,28 @@ body {
 .brush-btn:hover  { border-color: #3a3a5a; color: #9090a8; }
 .brush-btn.active { border-color: #4a4aff; color: #c8c8d4; background: #2a2a50; }
 
+/* ---- Scatter type selector ---- */
+
+#scatter-type-group {
+  display: flex;
+  gap: 4px;
+}
+
+.scatter-type-btn {
+  flex: 1;
+  padding: 6px 8px;
+  background: #1e1e30;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  color: #9090a8;
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.scatter-type-btn:hover  { border-color: #3a3a5a; color: #c8c8d4; }
+.scatter-type-btn.active { border-color: #4a4aff; color: #c8c8d4; background: #2a2a50; }
+
 /* ---- Density swatches (Scatter tool) ---- */
 
 #density-group {
@@ -208,6 +372,24 @@ body {
 .density-btn.active { border-color: #4a4aff; color: #c8c8d4; background: #2a2a50; }
 
 .hidden { display: none !important; }
+
+/* ---- Small instructional hints inside tool panels ---- */
+
+.tool-hint {
+  margin: 0;
+  font-size: 11px;
+  color: #4a4a6a;
+  line-height: 1.4;
+}
+
+.tool-hint kbd {
+  font-family: inherit;
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  padding: 0 3px;
+}
 
 /* ---- Toggle rows (cost options etc.) ---- */
 
@@ -486,4 +668,92 @@ dialog::backdrop {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ---- Terrain mode selector ---- */
+
+#terrain-mode-group {
+  display: flex;
+  gap: 4px;
+}
+
+/* ---- Elevation mode selector ---- */
+
+#elev-mode-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ---- River mode selector ---- */
+
+#river-mode-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ---- Elevation range lock ---- */
+
+.elev-range-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.elev-range-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: #6b6b8a;
+}
+
+.elev-range-label input {
+  background: #1e1e30;
+  border: 1px solid #2a2a3e;
+  color: #c8c8d4;
+  border-radius: 4px;
+  padding: 4px 5px;
+  font-size: 12px;
+  width: 100%;
+}
+
+.elev-range-label input:focus {
+  outline: none;
+  border-color: #4a4aff;
+}
+
+/* ---- Viewport cursor modes ---- */
+
+#viewport.is-eyedropping { cursor: crosshair; }
+#viewport.is-filling     { cursor: cell; }
+
+/* ---- Terrain lock icon ---- */
+
+.terrain-lock-icon {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.12s;
+  user-select: none;
+}
+
+.terrain-btn:hover .terrain-lock-icon { opacity: 0.4; }
+.terrain-btn--locked .terrain-lock-icon { opacity: 1; }
+
+.terrain-btn--locked::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.lock-hint {
+  font-size: 9px;
 }

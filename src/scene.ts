@@ -5,29 +5,37 @@ import {
   buildTerrainTextureArray, createTerrainMaterial,
   DEFAULT_TERRAIN_DESCRIPTORS, DEFAULT_TERRAIN_DEFINITIONS,
   DEFAULT_LIQUID_DESCRIPTORS, resolveLiquidMaterials, buildWaterTerrainSet,
+  buildTerrainLookup, resolveTerrainDefinitions,
+  loadHexPack,
   RtsCameraController,
   HexHashGrid,
   pickHexFromMeshes, pickHex,
   hexToWorld, hexCorners, offsetToHex, hexToOffset, smoothPath, hexRange,
 } from '@loyalj/hex-world';
-import type { ScatterDefinition, HexCoord } from '@loyalj/hex-world';
+import type { ScatterDefinition, HexCoord, TerrainDefinition, TerrainDescriptor, TerrainAssetRegistry } from '@loyalj/hex-world';
 
 const MAP_WIDTH    = 100;
 const MAP_HEIGHT   = 100;
 const CHUNK_SIZE   = 32;
 const LOAD_RADIUS  = 5;
 const ELEV_SCALE   = 0.5;
-const WATER_TERRAIN_SET = buildWaterTerrainSet(DEFAULT_TERRAIN_DEFINITIONS);
-const isWaterTerrain = (terrain: number) => WATER_TERRAIN_SET.has(terrain);
+
+const TERRAIN_LIGHT_DIR   = new THREE.Vector3(100, 120, 80);
+const TERRAIN_LIGHT_COLOR = new THREE.Color(0xfff4d0).multiplyScalar(0.7);
+const TERRAIN_AMBIENT     = new THREE.Color(0xd0e0ff).multiplyScalar(0.45);
 
 export interface SceneApi {
   map: HexMap;
   chunks: ChunkManager;
   hoveredCell: { col: number; row: number } | null;
   brushRadius: number;
+  isWater(terrain: number): boolean;
+  terrainLookup: Map<number, TerrainDefinition>;
   reload(): void;
   replaceMap(newMap: HexMap): void;
   setPathPreview(path: HexCoord[] | null, erasing?: boolean): void;
+  rebuildTerrainFromDescriptors(descriptors: TerrainDescriptor[], registry: TerrainAssetRegistry): Promise<void>;
+  loadAndApplyHexPack(source: File | Blob): Promise<{ terrainDescriptors: TerrainDescriptor[]; maps: Map<string, HexMap> }>;
 }
 
 export async function initScene(container: HTMLElement): Promise<SceneApi> {
@@ -49,20 +57,25 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
   sun.position.set(100, 120, 80);
   scene.add(ambient, sun);
 
-  // Materials
-  const terrainTex = await buildTerrainTextureArray(DEFAULT_TERRAIN_DESCRIPTORS);
-  const terrainMaterial = createTerrainMaterial(terrainTex, {
-    lightDir:   new THREE.Vector3(100, 120, 80),
-    lightColor: new THREE.Color(0xfff4d0).multiplyScalar(0.7),
-    ambient:    new THREE.Color(0xd0e0ff).multiplyScalar(0.45),
+  // Mutable terrain state — updated when user adds custom terrain or loads a pack
+  const terrainTex0 = await buildTerrainTextureArray(DEFAULT_TERRAIN_DESCRIPTORS);
+  let activeTerrainMaterial  = createTerrainMaterial(terrainTex0, {
+    lightDir:   TERRAIN_LIGHT_DIR,
+    lightColor: TERRAIN_LIGHT_COLOR,
+    ambient:    TERRAIN_AMBIENT,
   });
+  let activeTerrainDefinitions = DEFAULT_TERRAIN_DEFINITIONS;
+  let activeTerrainLookup      = buildTerrainLookup(DEFAULT_TERRAIN_DEFINITIONS);
+  let activeWaterTerrainSet    = buildWaterTerrainSet(DEFAULT_TERRAIN_DEFINITIONS);
+  const isWaterTerrain = (terrain: number) => activeWaterTerrainSet.has(terrain);
+
   const liquidMaterials = new Map(DEFAULT_LIQUID_DESCRIPTORS.map(d => [d.id, resolveLiquidMaterials(d)]));
   const roadMaterial    = createRoadMaterial();
 
   const layout   = createLayout(POINTY_TOP, 1);
   const hashGrid = new HexHashGrid(1234);
 
-  // Scatter — pine trees on 3 density tiers
+  // Scatter — pine trees on 3 density tiers (layer 0)
   const treeMat = new THREE.MeshLambertMaterial({ color: 0x5e8c2a });
   const pineDefinition: ScatterDefinition = {
     id:         'pine',
@@ -75,24 +88,37 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
     ],
   };
 
-  const map = new HexMap({ width: MAP_WIDTH, height: MAP_HEIGHT, featureLayerCount: 1 });
+  // Scatter — rocks / boulders on 3 density tiers (layer 1)
+  const rockMat = new THREE.MeshLambertMaterial({ color: 0x8a7a6a });
+  const rockDefinition: ScatterDefinition = {
+    id:         'rock',
+    name:       'Rocks',
+    layerIndex: 1,
+    tiers: [
+      [{ geometry: new THREE.IcosahedronGeometry(0.20, 0), material: rockMat, yOffset: 0.20 }],
+      [{ geometry: new THREE.IcosahedronGeometry(0.30, 0), material: rockMat, yOffset: 0.30 }],
+      [{ geometry: new THREE.IcosahedronGeometry(0.45, 0), material: rockMat, yOffset: 0.45 }],
+    ],
+  };
+
+  const map = new HexMap({ width: MAP_WIDTH, height: MAP_HEIGHT, featureLayerCount: 2 });
 
   function makeChunks(targetMap: HexMap): ChunkManager {
     return new ChunkManager({
       map:                  targetMap,
       layout,
       scene,
-      material:             terrainMaterial,
+      material:             activeTerrainMaterial,
       liquidMaterials,
       liquidDescriptors:    DEFAULT_LIQUID_DESCRIPTORS,
       roadMaterial,
-      terrainDefinitions:   DEFAULT_TERRAIN_DEFINITIONS,
+      terrainDefinitions:   activeTerrainDefinitions,
       chunkSize:            CHUNK_SIZE,
       loadRadius:           LOAD_RADIUS,
       geometryOptions:      { colorMode: 'splat' },
       waterGeometryOptions: {},
       hashGrid,
-      scatterDefinitions: [pineDefinition],
+      scatterDefinitions: [pineDefinition, rockDefinition],
     });
   }
 
@@ -214,6 +240,37 @@ export async function initScene(container: HTMLElement): Promise<SceneApi> {
       });
       previewLine.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
       previewLine.visible = true;
+    },
+    isWater(terrain: number): boolean {
+      return activeWaterTerrainSet.has(terrain);
+    },
+    get terrainLookup(): Map<number, TerrainDefinition> {
+      return activeTerrainLookup;
+    },
+    async rebuildTerrainFromDescriptors(descriptors: TerrainDescriptor[], registry: TerrainAssetRegistry): Promise<void> {
+      const tex    = await buildTerrainTextureArray(descriptors, registry);
+      const oldMat = activeTerrainMaterial;
+      activeTerrainMaterial    = createTerrainMaterial(tex, { lightDir: TERRAIN_LIGHT_DIR, lightColor: TERRAIN_LIGHT_COLOR, ambient: TERRAIN_AMBIENT });
+      activeTerrainDefinitions = resolveTerrainDefinitions(descriptors);
+      activeTerrainLookup      = buildTerrainLookup(activeTerrainDefinitions);
+      activeWaterTerrainSet    = buildWaterTerrainSet(activeTerrainDefinitions);
+      api.chunks.dispose();
+      api.chunks = makeChunks(api.map);
+      oldMat.dispose();
+    },
+    async loadAndApplyHexPack(source: File | Blob): Promise<{ terrainDescriptors: TerrainDescriptor[]; maps: Map<string, HexMap> }> {
+      const pkg    = await loadHexPack(source, {
+        terrainMaterialOptions: { lightDir: TERRAIN_LIGHT_DIR, lightColor: TERRAIN_LIGHT_COLOR, ambient: TERRAIN_AMBIENT },
+      });
+      const oldMat = activeTerrainMaterial;
+      activeTerrainMaterial    = pkg.terrainMaterial;
+      activeTerrainDefinitions = pkg.terrainDefinitions;
+      activeTerrainLookup      = buildTerrainLookup(activeTerrainDefinitions);
+      activeWaterTerrainSet    = buildWaterTerrainSet(activeTerrainDefinitions);
+      api.chunks.dispose();
+      api.chunks = makeChunks(api.map);
+      if (oldMat !== pkg.terrainMaterial) oldMat.dispose();
+      return { terrainDescriptors: pkg.terrainDescriptors, maps: pkg.maps };
     },
   };
 
