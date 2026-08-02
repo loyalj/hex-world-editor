@@ -1,54 +1,45 @@
 # hex-world-editor — Project Setup
 
-This is a map editor and generator app built on the `hex-world` library.
-The library lives at `d:\Coding\hex-world` and is consumed via `npm link`.
-
----
-
-## Prerequisites
-
-`hex-world` must be built and registered before this project can install it.
+This is a map editor and generator app built on the `@loyalj/hex-world` library
+(published on npm).
 
 ```powershell
-cd d:\Coding\hex-world
-npm run build
-npm link
-```
-
----
-
-## Scaffold this project
-
-Run these commands from `d:\Coding\hex-world-editor\`:
-
-```powershell
-npm create vite@latest . -- --template vanilla-ts
 npm install
-npm install three @types/three
-npm link hex-world
+npm run dev
 ```
+
+That's it — the published library comes down with `npm install` like any other
+dependency.
 
 ---
 
-## Verify the link
+## Developing against library HEAD (optional)
 
-Replace the contents of `src/main.ts` with:
+If the library repo is cloned as a **sibling directory** (`../hex-world`), the
+editor automatically consumes the library's *source* instead of the npm package:
 
-```ts
-import { HexMap, FbmPlugin } from 'hex-world';
-const map = new HexMap({ width: 10, height: 10, featureLayerCount: 1 });
-FbmPlugin.generate(map, FbmPlugin.defaultConfig, Date.now());
-console.log('map ready', map.width, map.height);
-```
+- `vite.config.ts` aliases `@loyalj/hex-world` → `../hex-world/src/index.ts`
+  when that path exists. Library edits hot-reload in the editor instantly — no
+  library build step needed.
+- `tsconfig.json` has a matching `paths` entry, so typechecking also runs
+  against library HEAD (the editor doubles as the library's integration test).
 
-Start the dev server (`npm run dev`) and confirm no import errors in the browser console.
+Both fall back to the installed npm package when the sibling repo is absent, so
+nothing in `package.json` changes and fresh clones just work.
+
+The dev server prints `[hex-world-editor] using local library source` on
+startup when the alias is active.
 
 ---
 
 ## Ongoing workflow
 
-- When `hex-world` changes, run `npm run build` there. The link picks up the new `dist/` automatically — no re-linking needed.
-- Never `npm install three` inside `hex-world`. It is a peer dependency; the editor project owns the Three.js instance.
+- Never `npm install three` inside `hex-world`. It is a peer dependency; the
+  editor project owns the Three.js instance (`resolve.dedupe` in
+  `vite.config.ts` enforces a single copy).
+- When publishing a new library version, bump the `@loyalj/hex-world` range in
+  `package.json` so cloners without the sibling repo get the same version the
+  editor was developed against.
 
 ---
 

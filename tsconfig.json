@@ -13,6 +13,12 @@
     "moduleDetection": "force",
     "noEmit": true,
 
+    /* Resolve the library from its sibling repo source when present; falls
+       back to the installed npm package when the path doesn't exist. */
+    "paths": {
+      "@loyalj/hex-world": ["../hex-world/src/index.ts"]
+    },
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,

@@ -5,11 +5,11 @@ import {
   exportHexPack,
 } from '@loyalj/hex-world';
 import { HeightmapPlugin } from './heightmapPlugin.ts';
-import type { HexCoord, TerrainDescriptor, TerrainAssetRegistry, ScatterDescriptor } from '@loyalj/hex-world';
+import type { HexCoord, TerrainDescriptor, TerrainAssetRegistry, ScatterDescriptor, MapTransaction, MapEdit, LiquidTypeDescriptor } from '@loyalj/hex-world';
 import { initScene } from './scene.ts';
 import { CommandHistory } from './history.ts';
 import { renderConfigFields } from './configUI.ts';
-import { PaintTerrainStrokeCommand, ElevationStrokeCommand, RiverPaintStrokeCommand, RoadPaintStrokeCommand, ScatterPaintStrokeCommand } from './commands.ts';
+import { MapEditCommand } from './commands.ts';
 import type { ConfigObj } from './configUI.ts';
 
 // ---- Generator registry ----
@@ -133,16 +133,31 @@ newSeedBtn.addEventListener('click', () => {
   seedInput.value = String(Math.floor(Math.random() * 0xffffffff));
 });
 
+// ---- Editor default terrain set ----
+// The library ships water as its only liquid terrain; the editor also offers
+// lava and acid out of the box, linked to the built-in liquid descriptors.
+// Colors match each liquid's shallowColor so palette swatches read correctly.
+const EDITOR_DEFAULT_TERRAINS: TerrainDescriptor[] = [
+  ...DEFAULT_TERRAIN_DESCRIPTORS,
+  { index: 6, id: 'lava', name: 'Lava', color: 0xd45a10,
+    liquidType: 'lava', roadCost: 1, texture: { type: 'procedural' } },
+  { index: 7, id: 'acid', name: 'Acid', color: 0x4db318,
+    liquidType: 'acid', roadCost: 1, texture: { type: 'procedural' } },
+];
+
 // ---- Scene init ----
-const scene   = await initScene(viewport);
+const scene   = await initScene(viewport, EDITOR_DEFAULT_TERRAINS);
 const history = new CommandHistory();
 
 // ---- Terrain descriptor state ----
-let terrainDescriptors: TerrainDescriptor[] = [...DEFAULT_TERRAIN_DESCRIPTORS];
+let terrainDescriptors: TerrainDescriptor[] = [...EDITOR_DEFAULT_TERRAINS];
 const terrainAssetBlobs    = new Map<string, Blob>();
 const terrainAssetRegistry: TerrainAssetRegistry = new Map();
 let pendingTerrainImage: File | null = null;
 let editingTerrainIndex: number | null = null;
+
+// ---- Liquid descriptor state ----
+let liquidDescriptors: LiquidTypeDescriptor[] = structuredClone(DEFAULT_LIQUID_DESCRIPTORS);
 
 history.onChange = () => {
   undoBtn.disabled = !history.canUndo;
@@ -343,6 +358,12 @@ function renderTerrainPalette(): void {
   addBtn.textContent = '+';
   addBtn.addEventListener('click', () => openTerrainDialog(null));
   group.appendChild(addBtn);
+  const liquidsBtn = document.createElement('button');
+  liquidsBtn.className = 'terrain-btn add-terrain-btn';
+  liquidsBtn.title = 'Edit liquid types (colors, glow, flow…)';
+  liquidsBtn.textContent = '💧';
+  liquidsBtn.addEventListener('click', () => openLiquidDialog());
+  group.appendChild(liquidsBtn);
   renderScatterTerrainFilter();
 }
 renderTerrainPalette();
@@ -443,6 +464,127 @@ addTerrainConfirm.addEventListener('click', async () => {
   addTerrainDialog.close();
   pendingTerrainImage = null;
   addTerrainImgSt.textContent = 'No image';
+});
+
+// ---- Liquid Types dialog ----
+const liquidDialog      = document.getElementById('liquid-dialog')        as HTMLDialogElement;
+const liquidCloseBtn    = document.getElementById('liquid-close-btn')     as HTMLButtonElement;
+const liquidSelect      = document.getElementById('liquid-select')        as HTMLSelectElement;
+const liquidName        = document.getElementById('liquid-name')          as HTMLInputElement;
+const liquidShallow     = document.getElementById('liquid-shallow')       as HTMLInputElement;
+const liquidShallowLbl  = document.getElementById('liquid-shallow-label') as HTMLElement;
+const liquidDeep        = document.getElementById('liquid-deep')          as HTMLInputElement;
+const liquidDeepLbl     = document.getElementById('liquid-deep-label')    as HTMLElement;
+const liquidFoam        = document.getElementById('liquid-foam')          as HTMLInputElement;
+const liquidFoamLbl     = document.getElementById('liquid-foam-label')    as HTMLElement;
+const liquidOpacity     = document.getElementById('liquid-opacity')       as HTMLInputElement;
+const liquidFlow        = document.getElementById('liquid-flow')          as HTMLInputElement;
+const liquidWave        = document.getElementById('liquid-wave')          as HTMLInputElement;
+const liquidFoamInt     = document.getElementById('liquid-foam-int')      as HTMLInputElement;
+const liquidEmissive    = document.getElementById('liquid-emissive')      as HTMLInputElement;
+const liquidEmissiveStr = document.getElementById('liquid-emissive-str')  as HTMLInputElement;
+const liquidApplyBtn    = document.getElementById('liquid-apply-btn')     as HTMLButtonElement;
+
+const cssHex = (c: number | undefined, fallback: number): string =>
+  `#${(c ?? fallback).toString(16).padStart(6, '0')}`;
+
+/** Rebuild the liquid options in the add-terrain dialog and the liquid manager. */
+function refreshLiquidOptions(): void {
+  const terrainSel = addTerrainLiquid.value;
+  addTerrainLiquid.innerHTML = '<option value="">&#8212; solid &#8212;</option>';
+  for (const d of liquidDescriptors) {
+    const opt = document.createElement('option');
+    opt.value = d.id;
+    opt.textContent = d.name;
+    addTerrainLiquid.appendChild(opt);
+  }
+  addTerrainLiquid.value = liquidDescriptors.some(d => d.id === terrainSel) ? terrainSel : '';
+
+  liquidSelect.innerHTML = '';
+  for (const d of liquidDescriptors) {
+    const opt = document.createElement('option');
+    opt.value = d.id;
+    opt.textContent = d.name;
+    liquidSelect.appendChild(opt);
+  }
+  const newOpt = document.createElement('option');
+  newOpt.value = '__new';
+  newOpt.textContent = '+ New liquid…';
+  liquidSelect.appendChild(newOpt);
+}
+refreshLiquidOptions();
+
+function loadLiquidForm(id: string): void {
+  const d = liquidDescriptors.find(l => l.id === id);
+  liquidName.value        = d?.name ?? '';
+  liquidShallow.value     = cssHex(d?.shallowColor, 0x527fb3);
+  liquidDeep.value        = cssHex(d?.deepColor,    0x1e477a);
+  liquidFoam.value        = cssHex(d?.foamColor,    0xeaf3ff);
+  liquidOpacity.value     = String(d?.opacity          ?? 0.82);
+  liquidFlow.value        = String(d?.flowSpeed        ?? 1);
+  liquidWave.value        = String(d?.waveScale        ?? 1);
+  liquidFoamInt.value     = String(d?.foamIntensity    ?? 1);
+  liquidEmissive.value    = cssHex(d?.emissiveColor, 0xff5a00);
+  liquidEmissiveStr.value = String(d?.emissiveStrength ?? 0);
+  liquidShallowLbl.textContent = liquidShallow.value;
+  liquidDeepLbl.textContent    = liquidDeep.value;
+  liquidFoamLbl.textContent    = liquidFoam.value;
+}
+
+function liquidIdFromName(name: string): string {
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'liquid';
+  if (!liquidDescriptors.some(d => d.id === base)) return base;
+  let n = 2;
+  while (liquidDescriptors.some(d => d.id === `${base}-${n}`)) n++;
+  return `${base}-${n}`;
+}
+
+liquidCloseBtn.addEventListener('click', () => liquidDialog.close());
+liquidDialog.addEventListener('click', e => { if (e.target === liquidDialog) liquidDialog.close(); });
+liquidShallow.addEventListener('input', () => { liquidShallowLbl.textContent = liquidShallow.value; });
+liquidDeep.addEventListener('input',    () => { liquidDeepLbl.textContent    = liquidDeep.value; });
+liquidFoam.addEventListener('input',    () => { liquidFoamLbl.textContent    = liquidFoam.value; });
+liquidSelect.addEventListener('change', () => loadLiquidForm(liquidSelect.value));
+
+function openLiquidDialog(): void {
+  refreshLiquidOptions();
+  liquidSelect.value = liquidDescriptors[0]?.id ?? '__new';
+  loadLiquidForm(liquidSelect.value);
+  liquidDialog.showModal();
+}
+
+liquidApplyBtn.addEventListener('click', () => {
+  const name = liquidName.value.trim();
+  if (!name) { alert('Please enter a liquid name.'); return; }
+  const isNew = liquidSelect.value === '__new';
+  const id    = isNew ? liquidIdFromName(name) : liquidSelect.value;
+
+  const emissiveStrength = parseFloat(liquidEmissiveStr.value) || 0;
+  const descriptor: LiquidTypeDescriptor = {
+    id,
+    name,
+    shallowColor:  parseInt(liquidShallow.value.slice(1), 16),
+    deepColor:     parseInt(liquidDeep.value.slice(1), 16),
+    foamColor:     parseInt(liquidFoam.value.slice(1), 16),
+    opacity:       Math.min(1, Math.max(0, parseFloat(liquidOpacity.value) || 0.82)),
+    flowSpeed:     Math.max(0, parseFloat(liquidFlow.value) || 1),
+    waveScale:     Math.max(0.05, parseFloat(liquidWave.value) || 1),
+    foamIntensity: Math.max(0, parseFloat(liquidFoamInt.value) || 0),
+    ...(emissiveStrength > 0 ? {
+      emissiveColor:    parseInt(liquidEmissive.value.slice(1), 16),
+      emissiveStrength,
+    } : {}),
+  };
+
+  const idx = liquidDescriptors.findIndex(d => d.id === id);
+  liquidDescriptors = idx >= 0
+    ? [...liquidDescriptors.slice(0, idx), descriptor, ...liquidDescriptors.slice(idx + 1)]
+    : [...liquidDescriptors, descriptor];
+
+  scene.setLiquidDescriptors(liquidDescriptors);
+  refreshLiquidOptions();
+  liquidSelect.value = id;
+  liquidDialog.close();
 });
 
 scatterTypeBtns.forEach(btn => {
@@ -583,24 +725,23 @@ dialogCloseBtn.addEventListener('click', () => newMapDialog.close());
 newMapDialog.addEventListener('click', e => { if (e.target === newMapDialog) newMapDialog.close(); });
 
 // ---- Stroke state ----
-type PaintEdit     = { col: number; row: number; prevTerrain: number; nextTerrain: number; prevElev: number | null; nextElev: number | null };
-type ElevEdit      = { col: number; row: number; prev: number; next: number };
-type RiverPaintEdit = { col: number; row: number; prevIncoming: number; prevOutgoing: number; nextIncoming: number; nextOutgoing: number };
-type RoadEdit      = { col: number; row: number; edge: number; nCol: number; nRow: number; nEdge: number; prevSet: boolean; prevNSet: boolean };
-
+// One library transaction per stroke: mutations apply live, the transaction
+// snapshots touched cells, and commit() yields the undo/redo unit.
 let isPointerDown  = false;
-let strokePaint    : PaintEdit[] = [];
-let strokeElev     : ElevEdit[]  = [];
-type ScatterEdit   = { col: number; row: number; layer: number; prev: number; next: number };
-let strokeScatter  : ScatterEdit[] = [];
+let strokeTx       : MapTransaction | null = null;
 let strokeVisited  = new Set<number>();
 
 // Path-tool preview state (shared by paint-road and paint-river)
 let pathStart   : { col: number; row: number } | null = null;
 let currentPath : HexCoord[] | null = null;
 let pathErasing = false;
-let strokeRiverErase        : RiverPaintEdit[] = [];
+let riverEraseTx            : MapTransaction | null = null;
 let strokeRiverEraseVisited = new Set<number>();
+
+/** Commit a finished edit to history (no-op for empty edits). */
+function commitEdit(edit: MapEdit): void {
+  if (!edit.isEmpty) history.commit(new MapEditCommand(edit, () => scene.chunks));
+}
 
 function cellKey(col: number, row: number): number {
   return row * scene.map.width + col;
@@ -690,14 +831,12 @@ function applyTool(col: number, row: number): void {
       if (prevTerrain === paintTerrainType) return;
       if (lockedTerrains.has(prevTerrain)) return;
       const prevElev = map.getElevation(col, row);
-      let nextElev: number | null = null;
+      const tx = (strokeTx ??= map.beginEdit());
+      tx.setTerrain(col, row, paintTerrainType);
       if (!scene.isWater(paintTerrainType) && scene.isWater(prevTerrain) && prevElev < 0) {
-        nextElev = 0;
+        tx.setElevation(col, row, 0);
       }
-      map.setTerrain(col, row, paintTerrainType);
-      if (nextElev !== null) map.setElevation(col, row, nextElev);
       chunks.markDirty(col, row);
-      strokePaint.push({ col, row, prevTerrain, nextTerrain: paintTerrainType, prevElev: nextElev !== null ? prevElev : null, nextElev });
       break;
     }
     case 'elevation': {
@@ -725,9 +864,8 @@ function applyTool(col: number, row: number): void {
       }
       next = Math.max(elevRangeMin, Math.min(elevRangeMax, next));
       if (next === prev) return;
-      map.setElevation(col, row, next);
+      (strokeTx ??= map.beginEdit()).setElevation(col, row, next);
       chunks.markDirty(col, row);
-      strokeElev.push({ col, row, prev, next });
       break;
     }
     case 'paint-scatter': {
@@ -738,9 +876,8 @@ function applyTool(col: number, row: number): void {
       const next  = paintScatterLevel < 0 ? (Math.floor(Math.random() * 3) + 1) : paintScatterLevel;
       const prev  = map.getFeatureLevel(col, row, layer);
       if (prev === next) return;
-      map.setFeatureLevel(col, row, layer, next);
+      (strokeTx ??= map.beginEdit()).setFeatureLevel(col, row, layer, next);
       chunks.markDirty(col, row);
-      strokeScatter.push({ col, row, layer, prev, next });
       break;
     }
   }
@@ -752,7 +889,7 @@ function floodFill(startCol: number, startRow: number): void {
   if (sourceTerrain === paintTerrainType) return;
   if (lockedTerrains.has(sourceTerrain)) return;
 
-  const edits: PaintEdit[] = [];
+  const tx = map.beginEdit();
   const visited = new Set<number>();
   let head = 0;
   const queue: Array<{ col: number; row: number }> = [{ col: startCol, row: startRow }];
@@ -761,14 +898,11 @@ function floodFill(startCol: number, startRow: number): void {
   while (head < queue.length) {
     const { col, row } = queue[head++];
     const prevElev = map.getElevation(col, row);
-    let nextElev: number | null = null;
+    tx.setTerrain(col, row, paintTerrainType);
     if (!scene.isWater(paintTerrainType) && scene.isWater(sourceTerrain) && prevElev < 0) {
-      nextElev = 0;
+      tx.setElevation(col, row, 0);
     }
-    map.setTerrain(col, row, paintTerrainType);
-    if (nextElev !== null) map.setElevation(col, row, nextElev);
     chunks.markDirty(col, row);
-    edits.push({ col, row, prevTerrain: sourceTerrain, nextTerrain: paintTerrainType, prevElev: nextElev !== null ? prevElev : null, nextElev });
 
     for (let dir = 0; dir < 6; dir++) {
       const nb = offsetNeighbor(col, row, EDGE_DIRS[dir]);
@@ -780,7 +914,7 @@ function floodFill(startCol: number, startRow: number): void {
     }
   }
 
-  if (edits.length > 0) history.commit(new PaintTerrainStrokeCommand(scene.map, scene.chunks, edits));
+  commitEdit(tx.commit());
 }
 
 function floodFillScatter(startCol: number, startRow: number): void {
@@ -789,7 +923,7 @@ function floodFillScatter(startCol: number, startRow: number): void {
   if (scatterTerrainFilter.size > 0 && !scatterTerrainFilter.has(sourceTerrain)) return;
 
   const layer = paintScatterLayer;
-  const edits: ScatterEdit[] = [];
+  const tx = map.beginEdit();
   const visited = new Set<number>();
   let head = 0;
   const queue: Array<{ col: number; row: number }> = [{ col: startCol, row: startRow }];
@@ -802,9 +936,8 @@ function floodFillScatter(startCol: number, startRow: number): void {
       const next = paintScatterLevel < 0 ? (Math.floor(Math.random() * 3) + 1) : paintScatterLevel;
       const prev = map.getFeatureLevel(col, row, layer);
       if (prev !== next) {
-        map.setFeatureLevel(col, row, layer, next);
+        tx.setFeatureLevel(col, row, layer, next);
         chunks.markDirty(col, row);
-        edits.push({ col, row, layer, prev, next });
       }
     }
     for (let dir = 0; dir < 6; dir++) {
@@ -816,7 +949,7 @@ function floodFillScatter(startCol: number, startRow: number): void {
       if (map.getTerrain(nb.col, nb.row) === sourceTerrain) queue.push({ col: nb.col, row: nb.row });
     }
   }
-  if (edits.length > 0) history.commit(new ScatterPaintStrokeCommand(scene.map, scene.chunks, edits));
+  commitEdit(tx.commit());
 }
 
 function applyErosionBrush(brushCol: number, brushRow: number): void {
@@ -845,16 +978,15 @@ function applyErosionBrush(brushCol: number, brushRow: number): void {
     }
   }
 
-  const edits: ElevEdit[] = [];
+  const tx = map.beginEdit();
   for (const { col, row } of cells) {
     const p = prevMap.get(cellKey(col, row))!;
     const n = working.get(cellKey(col, row))!;
     if (p === n) continue;
-    map.setElevation(col, row, n);
+    tx.setElevation(col, row, n);
     chunks.markDirty(col, row);
-    edits.push({ col, row, prev: p, next: n });
   }
-  if (edits.length > 0) history.commit(new ElevationStrokeCommand(scene.map, scene.chunks, edits));
+  commitEdit(tx.commit());
 }
 
 function computeWaypointPath(
@@ -922,46 +1054,88 @@ function traceDownhill(startCol: number, startRow: number): HexCoord[] {
 function applyRiverPath(path: HexCoord[], erasing: boolean): void {
   if (path.length < 2) return;
   const { map, chunks } = scene;
-  const edits: RiverPaintEdit[] = [];
-  for (let i = 0; i < path.length; i++) {
-    const off = hexToOffset(path[i]);
-    if (off.col < 0 || off.col >= map.width || off.row < 0 || off.row >= map.height) continue;
-    const prevIncoming = map.getIncomingRiverDir(off.col, off.row);
-    const prevOutgoing = map.getOutgoingRiverDir(off.col, off.row);
-    let nextIncoming = -1, nextOutgoing = -1;
-    if (!erasing) {
+  const tx = map.beginEdit();
+
+  if (erasing) {
+    // Partial detach: remove only the half-edges the drawn path follows, so
+    // tributaries joining the erased river at a confluence stay intact.
+    for (let i = 0; i < path.length - 1; i++) {
+      const a = hexToOffset(path[i]);
+      const b = hexToOffset(path[i + 1]);
+      if (!map.inBounds(a.col, a.row) || !map.inBounds(b.col, b.row)) continue;
+      const edge = edgeBetween(a.col, a.row, b.col, b.row);
+      if (edge === null) continue;
+      if (map.getOutgoingRiverDir(a.col, a.row) === edge) tx.removeRiverOutgoing(a.col, a.row);
+      tx.removeRiverIncoming(b.col, b.row, (edge + 3) % 6);
+      chunks.markDirty(a.col, a.row);
+      chunks.markDirty(b.col, b.row);
+    }
+  } else {
+    // Merge with existing rivers instead of clearing: incoming edges are
+    // additive (confluences), and replacing a cell's outgoing first detaches
+    // the old downstream neighbour's matching incoming edge.
+    for (let i = 0; i < path.length; i++) {
+      const off = hexToOffset(path[i]);
+      if (!map.inBounds(off.col, off.row)) continue;
       if (i > 0) {
         const prev = hexToOffset(path[i - 1]);
         const edge = edgeBetween(prev.col, prev.row, off.col, off.row);
-        if (edge !== null) nextIncoming = (edge + 3) % 6;
+        if (edge !== null) tx.setRiverIncoming(off.col, off.row, (edge + 3) % 6);
       }
       if (i < path.length - 1) {
         const next = hexToOffset(path[i + 1]);
         const edge = edgeBetween(off.col, off.row, next.col, next.row);
-        if (edge !== null) nextOutgoing = edge;
+        if (edge !== null) {
+          const oldOut = map.getOutgoingRiverDir(off.col, off.row);
+          if (oldOut >= 0 && oldOut !== edge) {
+            const oldNb = offsetNeighbor(off.col, off.row, EDGE_DIRS[oldOut]);
+            if (map.inBounds(oldNb.col, oldNb.row)) {
+              tx.removeRiverIncoming(oldNb.col, oldNb.row, (oldOut + 3) % 6);
+              chunks.markDirty(oldNb.col, oldNb.row);
+            }
+          }
+          tx.setRiverOutgoing(off.col, off.row, edge);
+        }
       }
+      chunks.markDirty(off.col, off.row);
     }
-    edits.push({ col: off.col, row: off.row, prevIncoming, prevOutgoing, nextIncoming, nextOutgoing });
   }
-  for (const e of edits) {
-    map.clearRiver(e.col, e.row);
-    if (e.nextIncoming >= 0) map.setRiverIncoming(e.col, e.row, e.nextIncoming);
-    if (e.nextOutgoing >= 0) map.setRiverOutgoing(e.col, e.row, e.nextOutgoing);
-    chunks.markDirty(e.col, e.row);
-  }
-  if (edits.length > 0) history.commit(new RiverPaintStrokeCommand(map, chunks, edits));
+
+  commitEdit(tx.commit());
 }
 
 function eraseRiverAt(col: number, row: number): void {
   const key = cellKey(col, row);
   if (strokeRiverEraseVisited.has(key)) return;
   strokeRiverEraseVisited.add(key);
-  if (!scene.map.hasRiver(col, row)) return;
-  const prevIncoming = scene.map.getIncomingRiverDir(col, row);
-  const prevOutgoing = scene.map.getOutgoingRiverDir(col, row);
-  scene.map.clearRiver(col, row);
-  scene.chunks.markDirty(col, row);
-  strokeRiverErase.push({ col, row, prevIncoming, prevOutgoing, nextIncoming: -1, nextOutgoing: -1 });
+  const { map, chunks } = scene;
+  if (!map.hasRiver(col, row)) return;
+  const tx = (riverEraseTx ??= map.beginEdit());
+
+  // Detach every neighbour half-edge pointing at this cell so no dangling
+  // channel stubs survive: upstream cells lose their outgoing into us, the
+  // downstream cell loses only OUR incoming edge (its other tributaries stay).
+  const mask = map.getIncomingRiverMask(col, row);
+  for (let e = 0; e < 6; e++) {
+    if (!(mask & (1 << e))) continue;
+    const nb = offsetNeighbor(col, row, EDGE_DIRS[e]);
+    if (!map.inBounds(nb.col, nb.row)) continue;
+    if (map.getOutgoingRiverDir(nb.col, nb.row) === (e + 3) % 6) {
+      tx.removeRiverOutgoing(nb.col, nb.row);
+      chunks.markDirty(nb.col, nb.row);
+    }
+  }
+  const out = map.getOutgoingRiverDir(col, row);
+  if (out >= 0) {
+    const nb = offsetNeighbor(col, row, EDGE_DIRS[out]);
+    if (map.inBounds(nb.col, nb.row)) {
+      tx.removeRiverIncoming(nb.col, nb.row, (out + 3) % 6);
+      chunks.markDirty(nb.col, nb.row);
+    }
+  }
+
+  tx.clearRiver(col, row);
+  chunks.markDirty(col, row);
 }
 
 function cancelWaypointRiver(): void {
@@ -989,22 +1163,18 @@ function endStroke(): void {
   if (activeTool === 'paint-road') {
     if (currentPath && currentPath.length >= 2) {
       const placing = !pathErasing;
-      const edits: RoadEdit[] = [];
+      const tx = scene.map.beginEdit();
       for (let i = 0; i < currentPath.length - 1; i++) {
         const a    = hexToOffset(currentPath[i]);
         const b    = hexToOffset(currentPath[i + 1]);
         const edge = edgeBetween(a.col, a.row, b.col, b.row);
         if (edge === null) continue;
-        const nEdge    = (edge + 3) % 6;
-        const prevSet  = scene.map.hasRoadThroughEdge(a.col, a.row, edge);
-        const prevNSet = scene.map.hasRoadThroughEdge(b.col, b.row, nEdge);
-        scene.map.setRoad(a.col, a.row, edge, placing);
-        scene.map.setRoad(b.col, b.row, nEdge, placing);
-        scene.chunks.markDirty(a.col, a.row);
-        scene.chunks.markDirty(b.col, b.row);
-        edits.push({ col: a.col, row: a.row, edge, nCol: b.col, nRow: b.row, nEdge, prevSet, prevNSet });
+        // Paired write keeps both half-edges in agreement.
+        for (const c of tx.setRoadEdge(a.col, a.row, edge, placing, POINTY_TOP)) {
+          scene.chunks.markDirty(c.col, c.row);
+        }
       }
-      if (edits.length > 0) history.commit(new RoadPaintStrokeCommand(scene.map, scene.chunks, edits, placing));
+      commitEdit(tx.commit());
     }
     scene.setPathPreview(null);
     pathStart   = null;
@@ -1014,8 +1184,8 @@ function endStroke(): void {
 
   if (activeTool === 'paint-river') {
     if (riverMode === 'erase') {
-      if (strokeRiverErase.length > 0) history.commit(new RiverPaintStrokeCommand(scene.map, scene.chunks, strokeRiverErase));
-      strokeRiverErase        = [];
+      if (riverEraseTx) commitEdit(riverEraseTx.commit());
+      riverEraseTx            = null;
       strokeRiverEraseVisited = new Set();
       return;
     }
@@ -1034,7 +1204,7 @@ function endStroke(): void {
       const startElev = scene.map.getElevation(startOff.col, startOff.row);
       const endElev   = scene.map.getElevation(endOff.col,   endOff.row);
       const n = currentPath.length - 1;
-      const edits: ElevEdit[] = [];
+      const tx = scene.map.beginEdit();
       for (let i = 0; i <= n; i++) {
         const off = hexToOffset(currentPath[i]);
         if (off.col < 0 || off.col >= scene.map.width || off.row < 0 || off.row >= scene.map.height) continue;
@@ -1042,11 +1212,10 @@ function endStroke(): void {
         const next = Math.max(elevRangeMin, Math.min(elevRangeMax,
           Math.round(startElev + (endElev - startElev) * (i / n))));
         if (prev === next) continue;
-        scene.map.setElevation(off.col, off.row, next);
+        tx.setElevation(off.col, off.row, next);
         scene.chunks.markDirty(off.col, off.row);
-        edits.push({ col: off.col, row: off.row, prev, next });
       }
-      if (edits.length > 0) history.commit(new ElevationStrokeCommand(scene.map, scene.chunks, edits));
+      commitEdit(tx.commit());
     }
     scene.setPathPreview(null);
     pathStart    = null;
@@ -1055,17 +1224,9 @@ function endStroke(): void {
     return;
   }
 
-  if (strokePaint.length > 0) {
-    history.commit(new PaintTerrainStrokeCommand(scene.map, scene.chunks, strokePaint));
-  } else if (strokeElev.length > 0) {
-    history.commit(new ElevationStrokeCommand(scene.map, scene.chunks, strokeElev));
-  } else if (strokeScatter.length > 0) {
-    history.commit(new ScatterPaintStrokeCommand(scene.map, scene.chunks, strokeScatter));
-  }
+  if (strokeTx) commitEdit(strokeTx.commit());
 
-  strokePaint   = [];
-  strokeElev    = [];
-  strokeScatter = [];
+  strokeTx      = null;
   strokeVisited = new Set();
   contourLevel  = null;
 }
@@ -1142,7 +1303,7 @@ viewport.addEventListener('pointerdown', e => {
 
   if (activeTool === 'paint-river' && riverMode === 'erase') {
     isPointerDown           = true;
-    strokeRiverErase        = [];
+    riverEraseTx            = null;
     strokeRiverEraseVisited = new Set();
     eraseRiverAt(cell.col, cell.row);
     return;
@@ -1168,9 +1329,7 @@ viewport.addEventListener('pointerdown', e => {
   }
 
   isPointerDown = true;
-  strokePaint   = [];
-  strokeElev    = [];
-  strokeScatter = [];
+  strokeTx      = null;
   strokeVisited = new Set();
   if (activeTool === 'elevation' && elevMode === 'flatten') {
     flattenTarget = scene.map.getElevation(cell.col, cell.row);
@@ -1258,7 +1417,7 @@ updateInspector();
 // ---- Save / Load ----
 saveBtn.addEventListener('click', () => {
   const seed = parseInt(seedInput.value, 10) >>> 0;
-  const json = serializeMapJSON(scene.map, { generatorId: activePlugin.id, seed }, SCATTER_DESCRIPTORS, terrainDescriptors, DEFAULT_LIQUID_DESCRIPTORS);
+  const json = serializeMapJSON(scene.map, { generatorId: activePlugin.id, seed }, SCATTER_DESCRIPTORS, terrainDescriptors, liquidDescriptors);
   const url  = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
   const a    = document.createElement('a');
   a.href     = url;
@@ -1292,11 +1451,16 @@ loadInput.addEventListener('change', async () => {
       // to procedural since pixel data is not embedded in JSON (use HexPack for that).
       terrainDescriptors = result.terrainDescriptors.length > 0
         ? result.terrainDescriptors
-        : [...DEFAULT_TERRAIN_DESCRIPTORS];
+        : [...EDITOR_DEFAULT_TERRAINS];
       terrainAssetBlobs.clear();
       terrainAssetRegistry.clear();
       await scene.rebuildTerrainFromDescriptors(terrainDescriptors, terrainAssetRegistry);
+      liquidDescriptors = result.liquidDescriptors.length > 0
+        ? result.liquidDescriptors
+        : structuredClone(DEFAULT_LIQUID_DESCRIPTORS);
+      scene.setLiquidDescriptors(liquidDescriptors);
       renderTerrainPalette();
+      refreshLiquidOptions();
     } else {
       loaded = deserializeMap(new Uint8Array(await file.arrayBuffer()));
     }
@@ -1313,7 +1477,7 @@ exportPackBtn.addEventListener('click', async () => {
   const blob = await exportHexPack({
     name:               'Map Pack',
     terrainDescriptors,
-    liquidDescriptors:  DEFAULT_LIQUID_DESCRIPTORS,
+    liquidDescriptors,
     scatterDescriptors: SCATTER_DESCRIPTORS,
     textureAssets:      terrainAssetBlobs,
     maps: [{
@@ -1338,11 +1502,13 @@ openPackInput.addEventListener('change', async () => {
   if (!file) return;
   openPackInput.value = '';
   try {
-    const { terrainDescriptors: pkgDescs, maps } = await scene.loadAndApplyHexPack(file);
+    const { terrainDescriptors: pkgDescs, liquidDescriptors: pkgLiquids, maps } = await scene.loadAndApplyHexPack(file);
     terrainDescriptors = pkgDescs;
+    liquidDescriptors  = pkgLiquids.length > 0 ? pkgLiquids : structuredClone(DEFAULT_LIQUID_DESCRIPTORS);
     terrainAssetBlobs.clear();
     terrainAssetRegistry.clear();
     renderTerrainPalette();
+    refreshLiquidOptions();
     if (maps.size > 0) {
       scene.replaceMap([...maps.values()][0]);
       history.clear();

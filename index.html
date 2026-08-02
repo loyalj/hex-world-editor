@@ -288,12 +288,70 @@
           <span>Liquid type <span class="field-hint">(optional)</span></span>
           <select id="add-terrain-liquid">
             <option value="">&#8212; solid &#8212;</option>
-            <option value="water">Water</option>
-            <option value="lava">Lava</option>
-            <option value="acid">Acid</option>
           </select>
         </label>
         <button id="add-terrain-confirm-btn">Add Terrain</button>
+      </div>
+    </dialog>
+    <dialog id="liquid-dialog">
+      <div class="dialog-header">
+        <span class="dialog-title">Liquid Types</span>
+        <button class="dialog-close" id="liquid-close-btn">&#x2715;</button>
+      </div>
+      <div class="dialog-body">
+        <label class="field">
+          <span>Liquid</span>
+          <select id="liquid-select"></select>
+        </label>
+        <label class="field">
+          <span>Name</span>
+          <input id="liquid-name" type="text" placeholder="e.g. Slime" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Shallow color</span>
+          <div class="color-row">
+            <input id="liquid-shallow" type="color" value="#527fb3" />
+            <span id="liquid-shallow-label" class="color-hex-label">#527fb3</span>
+          </div>
+        </label>
+        <label class="field">
+          <span>Deep color</span>
+          <div class="color-row">
+            <input id="liquid-deep" type="color" value="#1e477a" />
+            <span id="liquid-deep-label" class="color-hex-label">#1e477a</span>
+          </div>
+        </label>
+        <label class="field">
+          <span>Foam color</span>
+          <div class="color-row">
+            <input id="liquid-foam" type="color" value="#eaf3ff" />
+            <span id="liquid-foam-label" class="color-hex-label">#eaf3ff</span>
+          </div>
+        </label>
+        <label class="field">
+          <span>Opacity <span class="field-hint">(0&#8211;1)</span></span>
+          <input id="liquid-opacity" type="number" min="0" max="1" step="0.05" value="0.82" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Flow speed <span class="field-hint">(1 = water)</span></span>
+          <input id="liquid-flow" type="number" min="0" max="5" step="0.05" value="1" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Wave scale <span class="field-hint">(&lt;1 = broad swells)</span></span>
+          <input id="liquid-wave" type="number" min="0.05" max="4" step="0.05" value="1" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Foam intensity <span class="field-hint">(0 = none)</span></span>
+          <input id="liquid-foam-int" type="number" min="0" max="3" step="0.05" value="1" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Emissive color + strength <span class="field-hint">(0 = no glow)</span></span>
+          <div class="color-row">
+            <input id="liquid-emissive" type="color" value="#ff5a00" />
+            <input id="liquid-emissive-str" type="number" min="0" max="2" step="0.05" value="0" autocomplete="off" style="width:5em" />
+          </div>
+        </label>
+        <button id="liquid-apply-btn">Apply</button>
       </div>
     </dialog>
     <script type="module" src="/src/main.ts"></script>
