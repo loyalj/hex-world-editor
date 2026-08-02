@@ -127,13 +127,28 @@
               <button class="scatter-type-btn active" data-scatter-layer="0">Trees</button>
               <button class="scatter-type-btn"        data-scatter-layer="1">Rocks</button>
             </div>
+            <div class="group-header">Mode</div>
+            <div id="scatter-mode-group">
+              <button class="scatter-type-btn active" data-scatter-mode="brush">Brush</button>
+              <button class="scatter-type-btn" data-scatter-mode="fill">Fill</button>
+            </div>
             <div class="group-header">Density</div>
             <div id="density-group">
               <button class="density-btn" data-density="0">None</button>
               <button class="density-btn active" data-density="1">Sparse</button>
               <button class="density-btn" data-density="2">Medium</button>
               <button class="density-btn" data-density="3">Dense</button>
+              <button class="density-btn" data-density="-1">Random</button>
             </div>
+            <p class="tool-hint">Alt+click to sample density.</p>
+            <div class="group-header">Elevation Filter</div>
+            <div class="elev-range-row">
+              <label class="elev-range-label">Min<input type="number" id="scatter-elev-min" value="-128" min="-128" max="127" autocomplete="off" /></label>
+              <label class="elev-range-label">Max<input type="number" id="scatter-elev-max" value="127"  min="-128" max="127" autocomplete="off" /></label>
+            </div>
+            <div class="group-header">Terrain Filter</div>
+            <p class="tool-hint">Toggle terrain types to restrict painting. None active = all terrain.</p>
+            <div id="scatter-terrain-filter" class="terrain-filter-group"></div>
             <div class="group-header">Brush</div>
             <div class="brush-group" id="scatter-brush-group">
               <button class="brush-btn active" data-brush="0" title="1 cell"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"  fill="currentColor"/></svg></button>

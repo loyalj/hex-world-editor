@@ -57,8 +57,8 @@ const createMapBtn   = document.getElementById('create-map-btn')   as HTMLButton
 const viewport       = document.getElementById('viewport')         as HTMLDivElement;
 
 const toolButtons    = document.querySelectorAll<HTMLButtonElement>('.tool-btn');
-const scatterTypeBtns = document.querySelectorAll<HTMLButtonElement>('.scatter-type-btn');
-const densityBtns    = document.querySelectorAll<HTMLButtonElement>('.density-btn');
+const scatterTypeBtns = document.querySelectorAll<HTMLButtonElement>('#scatter-type-group .scatter-type-btn');
+const densityBtns    = document.querySelectorAll<HTMLButtonElement>('#density-group .density-btn');
 const terrainOptions = document.getElementById('terrain-options')  as HTMLElement;
 const elevOptions    = document.getElementById('elevation-options') as HTMLElement;
 const scatterOptions = document.getElementById('scatter-options')  as HTMLElement;
@@ -163,6 +163,11 @@ let activeTool        : ToolId   = 'paint-terrain';
 let paintTerrainType  : number   = 0;       // Grassland
 let paintScatterLevel : number   = 1;       // Sparse
 let paintScatterLayer : number   = 0;       // Trees
+type ScatterMode = 'brush' | 'fill';
+let scatterMode       : ScatterMode = 'brush';
+let scatterElevMin    : number   = -128;
+let scatterElevMax    : number   = 127;
+let scatterTerrainFilter = new Set<number>();
 let elevStep          : number   = 1;
 type ElevMode = 'raise-lower' | 'smooth' | 'flatten' | 'noise' | 'set-absolute' | 'slope' | 'erosion';
 let elevMode      : ElevMode = 'raise-lower';
@@ -225,7 +230,10 @@ function activeBrushRadius(): number {
 }
 
 function updateViewportCursor(): void {
-  viewport.classList.toggle('is-filling', activeTool === 'paint-terrain' && terrainMode === 'fill');
+  viewport.classList.toggle('is-filling',
+    (activeTool === 'paint-terrain' && terrainMode === 'fill') ||
+    (activeTool === 'paint-scatter' && scatterMode === 'fill'),
+  );
 }
 
 function updateElevStepVisibility(): void {
@@ -335,8 +343,31 @@ function renderTerrainPalette(): void {
   addBtn.textContent = '+';
   addBtn.addEventListener('click', () => openTerrainDialog(null));
   group.appendChild(addBtn);
+  renderScatterTerrainFilter();
 }
 renderTerrainPalette();
+
+function renderScatterTerrainFilter(): void {
+  const group = document.getElementById('scatter-terrain-filter')!;
+  group.innerHTML = '';
+  for (const desc of terrainDescriptors) {
+    const btn = document.createElement('button');
+    btn.className = 'terrain-filter-btn';
+    btn.title = desc.name;
+    btn.style.background = `#${desc.color.toString(16).padStart(6, '0')}`;
+    if (scatterTerrainFilter.has(desc.index)) btn.classList.add('active');
+    btn.addEventListener('click', () => {
+      if (scatterTerrainFilter.has(desc.index)) {
+        scatterTerrainFilter.delete(desc.index);
+        btn.classList.remove('active');
+      } else {
+        scatterTerrainFilter.add(desc.index);
+        btn.classList.add('active');
+      }
+    });
+    group.appendChild(btn);
+  }
+}
 
 // ---- Add Terrain dialog ----
 addTerrainCloseBtw.addEventListener('click', () => addTerrainDialog.close());
@@ -445,6 +476,25 @@ function wireBrushGroup(groupId: string, setRadius: (r: number) => void): void {
 wireBrushGroup('terrain-brush-group', r => { terrainBrushRadius = r; });
 wireBrushGroup('elev-brush-group',    r => { elevBrushRadius    = r; });
 wireBrushGroup('scatter-brush-group', r => { scatterBrushRadius = r; });
+
+const scatterModeBtns = document.querySelectorAll<HTMLButtonElement>('#scatter-mode-group .scatter-type-btn');
+scatterModeBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    scatterMode = btn.dataset['scatterMode'] as ScatterMode;
+    scatterModeBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    updateViewportCursor();
+  });
+});
+
+(document.getElementById('scatter-elev-min') as HTMLInputElement).addEventListener('input', function () {
+  scatterElevMin = Math.max(-128, Math.min(127, parseInt(this.value, 10)));
+  if (scatterElevMin > scatterElevMax) scatterElevMax = scatterElevMin;
+});
+(document.getElementById('scatter-elev-max') as HTMLInputElement).addEventListener('input', function () {
+  scatterElevMax = Math.max(-128, Math.min(127, parseInt(this.value, 10)));
+  if (scatterElevMax < scatterElevMin) scatterElevMin = scatterElevMax;
+});
 
 const terrainModeBtns = document.querySelectorAll<HTMLButtonElement>('#terrain-mode-group .scatter-type-btn');
 terrainModeBtns.forEach(btn => {
@@ -681,12 +731,16 @@ function applyTool(col: number, row: number): void {
       break;
     }
     case 'paint-scatter': {
+      const elev = map.getElevation(col, row);
+      if (elev < scatterElevMin || elev > scatterElevMax) return;
+      if (scatterTerrainFilter.size > 0 && !scatterTerrainFilter.has(map.getTerrain(col, row))) return;
       const layer = paintScatterLayer;
+      const next  = paintScatterLevel < 0 ? (Math.floor(Math.random() * 3) + 1) : paintScatterLevel;
       const prev  = map.getFeatureLevel(col, row, layer);
-      if (prev === paintScatterLevel) return;
-      map.setFeatureLevel(col, row, layer, paintScatterLevel);
+      if (prev === next) return;
+      map.setFeatureLevel(col, row, layer, next);
       chunks.markDirty(col, row);
-      strokeScatter.push({ col, row, layer, prev, next: paintScatterLevel });
+      strokeScatter.push({ col, row, layer, prev, next });
       break;
     }
   }
@@ -727,6 +781,42 @@ function floodFill(startCol: number, startRow: number): void {
   }
 
   if (edits.length > 0) history.commit(new PaintTerrainStrokeCommand(scene.map, scene.chunks, edits));
+}
+
+function floodFillScatter(startCol: number, startRow: number): void {
+  const { map, chunks } = scene;
+  const sourceTerrain = map.getTerrain(startCol, startRow);
+  if (scatterTerrainFilter.size > 0 && !scatterTerrainFilter.has(sourceTerrain)) return;
+
+  const layer = paintScatterLayer;
+  const edits: ScatterEdit[] = [];
+  const visited = new Set<number>();
+  let head = 0;
+  const queue: Array<{ col: number; row: number }> = [{ col: startCol, row: startRow }];
+  visited.add(cellKey(startCol, startRow));
+
+  while (head < queue.length) {
+    const { col, row } = queue[head++];
+    const elev = map.getElevation(col, row);
+    if (elev >= scatterElevMin && elev <= scatterElevMax) {
+      const next = paintScatterLevel < 0 ? (Math.floor(Math.random() * 3) + 1) : paintScatterLevel;
+      const prev = map.getFeatureLevel(col, row, layer);
+      if (prev !== next) {
+        map.setFeatureLevel(col, row, layer, next);
+        chunks.markDirty(col, row);
+        edits.push({ col, row, layer, prev, next });
+      }
+    }
+    for (let dir = 0; dir < 6; dir++) {
+      const nb = offsetNeighbor(col, row, EDGE_DIRS[dir]);
+      if (nb.col < 0 || nb.col >= map.width || nb.row < 0 || nb.row >= map.height) continue;
+      const key = cellKey(nb.col, nb.row);
+      if (visited.has(key)) continue;
+      visited.add(key);
+      if (map.getTerrain(nb.col, nb.row) === sourceTerrain) queue.push({ col: nb.col, row: nb.row });
+    }
+  }
+  if (edits.length > 0) history.commit(new ScatterPaintStrokeCommand(scene.map, scene.chunks, edits));
 }
 
 function applyErosionBrush(brushCol: number, brushRow: number): void {
@@ -984,6 +1074,23 @@ viewport.addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
   const cell = scene.hoveredCell;
   if (!cell) return;
+
+  // Scatter eyedropper: Alt+click samples density on the active layer
+  if (e.altKey && activeTool === 'paint-scatter') {
+    e.preventDefault();
+    const sampled = scene.map.getFeatureLevel(cell.col, cell.row, paintScatterLayer);
+    paintScatterLevel = sampled;
+    document.querySelectorAll<HTMLButtonElement>('#density-group .density-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset['density'] === String(sampled));
+    });
+    return;
+  }
+
+  // Scatter flood fill
+  if (activeTool === 'paint-scatter' && scatterMode === 'fill') {
+    floodFillScatter(cell.col, cell.row);
+    return;
+  }
 
   // Eyedropper: Alt+click samples terrain without painting
   if (e.altKey && activeTool === 'paint-terrain') {
@@ -1260,7 +1367,7 @@ window.addEventListener('keyup', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Alt' && (activeTool === 'paint-terrain' || activeTool === 'elevation')) viewport.classList.add('is-eyedropping');
+  if (e.key === 'Alt' && (activeTool === 'paint-terrain' || activeTool === 'elevation' || activeTool === 'paint-scatter')) viewport.classList.add('is-eyedropping');
   if (e.key === 'Control') contourSnapHeld = true;
   // Don't fire shortcuts while the user is typing in an input/select
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
