@@ -18,6 +18,8 @@ export interface SceneApi {
   brushRadius: number;
   isWater(terrain: number): boolean;
   terrainLookup: Map<number, TerrainDefinition>;
+  /** Show or hide the shader hex grid overlay (survives terrain material swaps). */
+  setHexGrid(visible: boolean): void;
   reload(): void;
   replaceMap(newMap: HexMap): void;
   setPathPreview(path: HexCoord[] | null, erasing?: boolean): void;
@@ -97,6 +99,9 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     },
     isWater(terrain: number): boolean {
       return world.isWater(terrain);
+    },
+    setHexGrid(visible: boolean): void {
+      world.setHexGrid(visible);
     },
     get terrainLookup(): Map<number, TerrainDefinition> {
       return world.terrainLookup;

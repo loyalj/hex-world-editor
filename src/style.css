@@ -35,7 +35,8 @@ body {
 }
 
 .menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
   padding: 6px 14px;
   background: transparent;
@@ -50,6 +51,12 @@ body {
 .menu-item:hover {
   background: #1e1e30;
   color: #c8c8d4;
+}
+
+.menu-check {
+  margin-left: auto;
+  padding-left: 12px;
+  color: #7ec97e;
 }
 
 /* ---- Ribbon ---- */

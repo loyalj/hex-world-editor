@@ -39,6 +39,10 @@ const SCATTER_DESCRIPTORS: ScatterDescriptor[] = [
 // ---- DOM refs ----
 const mapMenuBtn     = document.getElementById('map-menu-btn')     as HTMLButtonElement;
 const mapMenuPanel   = document.getElementById('map-menu-panel')   as HTMLDivElement;
+const viewMenuBtn    = document.getElementById('view-menu-btn')    as HTMLButtonElement;
+const viewMenuPanel  = document.getElementById('view-menu-panel')  as HTMLDivElement;
+const toggleGridBtn  = document.getElementById('toggle-grid-btn')  as HTMLButtonElement;
+const gridCheck      = document.getElementById('grid-check')       as HTMLSpanElement;
 const undoBtn        = document.getElementById('undo-btn')         as HTMLButtonElement;
 const redoBtn        = document.getElementById('redo-btn')         as HTMLButtonElement;
 const saveBtn        = document.getElementById('save-btn')         as HTMLButtonElement;
@@ -716,9 +720,25 @@ roadModeBtns.forEach(btn => {
 
 mapMenuBtn.addEventListener('click', e => {
   e.stopPropagation();
+  viewMenuPanel.classList.add('hidden');
   mapMenuPanel.classList.toggle('hidden');
 });
-document.addEventListener('click', () => mapMenuPanel.classList.add('hidden'));
+viewMenuBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  mapMenuPanel.classList.add('hidden');
+  viewMenuPanel.classList.toggle('hidden');
+});
+document.addEventListener('click', () => {
+  mapMenuPanel.classList.add('hidden');
+  viewMenuPanel.classList.add('hidden');
+});
+
+let gridVisible = false;
+toggleGridBtn.addEventListener('click', () => {
+  gridVisible = !gridVisible;
+  scene.setHexGrid(gridVisible);
+  gridCheck.classList.toggle('hidden', !gridVisible);
+});
 
 newMapBtn.addEventListener('click', () => newMapDialog.showModal());
 dialogCloseBtn.addEventListener('click', () => newMapDialog.close());
@@ -777,7 +797,14 @@ function updatePathPreview(): void {
       endHex,
       (from, to) => {
         const toOff = hexToOffset(to);
-        if (scene.isWater(scene.map.getTerrain(toOff.col, toOff.row))) return Infinity;
+        if (scene.isWater(scene.map.getTerrain(toOff.col, toOff.row))) {
+          // Rivers may end one cell into water — the land→water edge is what
+          // forms an estuary. Only the drag destination qualifies, so paths
+          // never route THROUGH water; roads never enter it at all.
+          const isRiverEnd = activeTool === 'paint-river'
+            && to.q === endHex.q && to.r === endHex.r;
+          return isRiverEnd ? 1 : Infinity;
+        }
 
         let cost = 1;
 
@@ -804,8 +831,32 @@ function updatePathPreview(): void {
       scene.map,
     );
   }
+  if (path && activeTool === 'paint-river' && !pathErasing) {
+    path = trimRiverPathAtWater(path);
+  }
   currentPath = path;
   scene.setPathPreview(path ?? [startHex], pathErasing);
+}
+
+/**
+ * Rivers touch water only at their ends: they may START one cell inside water
+ * (a lake outlet) and END one cell into water (the land→water edge forms the
+ * estuary), but never continue across it — a straight or waypoint line dragged
+ * over a bay stops at the first water cell. Erase paths are NOT trimmed, so
+ * rivers that pass through generator lakes stay erasable end to end.
+ */
+function trimRiverPathAtWater(path: HexCoord[]): HexCoord[] {
+  const isWaterAt = (h: HexCoord): boolean => {
+    const off = hexToOffset(h);
+    return scene.map.inBounds(off.col, off.row)
+      && scene.isWater(scene.map.getTerrain(off.col, off.row));
+  };
+  for (let i = 1; i < path.length; i++) {
+    if (!isWaterAt(path[i])) continue;
+    // Two water cells in a row means the path entered open water — cut before.
+    return path.slice(0, isWaterAt(path[i - 1]) ? i : i + 1);
+  }
+  return path;
 }
 
 function applyBrush(col: number, row: number): void {
@@ -1005,7 +1056,8 @@ function computeWaypointPath(
     if (i === 0) result.push(...seg);
     else result.push(...seg.slice(1));
   }
-  return result;
+  // Waypoint rivers follow the same rule as drag rivers: stop at the shore.
+  return trimRiverPathAtWater(result);
 }
 
 function traceDownhill(startCol: number, startRow: number): HexCoord[] {
