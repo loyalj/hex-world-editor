@@ -79,6 +79,16 @@
             <button class="menu-item" id="toggle-grid-btn">Hex grid <span id="grid-check" class="menu-check hidden">&#10003;</span></button>
             <button class="menu-item" id="toggle-shadows-btn">Shadows <span id="shadows-check" class="menu-check">&#10003;</span></button>
             <button class="menu-item" id="toggle-sky-btn">Sky &amp; haze <span id="sky-check" class="menu-check">&#10003;</span></button>
+            <button class="menu-item" id="toggle-godrays-btn">God rays <span id="godrays-check" class="menu-check">&#10003;</span></button>
+            <button class="menu-item" id="toggle-skirt-btn">Map skirt <span id="skirt-check" class="menu-check">&#10003;</span></button>
+            <div class="menu-divider"></div>
+            <div class="menu-submenu">
+              <button class="menu-item" id="camera-mode-btn">Camera <span class="menu-arrow">&#8250;</span></button>
+              <div class="submenu-panel">
+                <button class="menu-item" id="camera-rts-btn">RTS <span id="camera-rts-check" class="menu-check hidden">&#10003;</span></button>
+                <button class="menu-item" id="camera-free-btn">Free <span id="camera-free-check" class="menu-check">&#10003;</span></button>
+              </div>
+            </div>
             <div class="menu-divider"></div>
             <button class="menu-item" id="toggle-territory-btn">Territory borders <span id="territory-check" class="menu-check">&#10003;</span></button>
             <button class="menu-item" id="toggle-resources-btn">Resource icons <span id="resources-check" class="menu-check">&#10003;</span></button>
@@ -128,8 +138,6 @@
         <aside id="left-panel">
           <div id="drawer-head">
             <div id="drawer-title">Terrain</div>
-            <div class="badge" id="drawer-badge">1</div>
-            <button class="link-btn at-end" id="drawer-hide-btn">Hide</button>
           </div>
 
           <div id="drawer-body">
@@ -149,7 +157,6 @@
                 <button class="brush-btn"        data-brush="2" title="19 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"  fill="currentColor"/></svg></button>
                 <button class="brush-btn"        data-brush="3" title="37 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="currentColor"/></svg></button>
               </div>
-              <p class="tool-hint">Alt+click samples the cell under the cursor. Click the lock on a swatch to keep it.</p>
             </div>
 
             <div id="elevation-options" class="tool-panel hidden">
@@ -196,12 +203,11 @@
                   </svg>
                 </button>
               </div>
-              <div class="group-header">Range lock</div>
+              <div class="group-header" data-tip="Ctrl snaps to the contour under the cursor.">Range lock</div>
               <div class="elev-range-row">
                 <label class="elev-range-label">Min<input type="number" id="elev-range-min" value="-128" min="-128" max="127" autocomplete="off" /></label>
                 <label class="elev-range-label">Max<input type="number" id="elev-range-max" value="127"  min="-128" max="127" autocomplete="off" /></label>
               </div>
-              <p class="tool-hint">Ctrl snaps to the contour under the cursor.</p>
               <div class="group-header">Brush</div>
               <div class="brush-group" id="elev-brush-group">
                 <button class="brush-btn active" data-brush="0" title="1 cell"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"  fill="currentColor"/></svg></button>
@@ -224,7 +230,7 @@
                 <button class="scatter-type-btn active" data-scatter-mode="brush">Brush</button>
                 <button class="scatter-type-btn" data-scatter-mode="fill">Fill</button>
               </div>
-              <div class="group-header">Density</div>
+              <div class="group-header" data-tip="Alt+click samples the density under the cursor.">Density</div>
               <div class="option-list" id="density-group">
                 <button class="density-btn" data-density="0">None</button>
                 <button class="density-btn active" data-density="1">Sparse</button>
@@ -232,15 +238,13 @@
                 <button class="density-btn" data-density="3">Dense</button>
                 <button class="density-btn" data-density="-1">Random</button>
               </div>
-              <p class="tool-hint">Alt+click samples the density under the cursor.</p>
               <div class="group-header">Elevation filter</div>
               <div class="elev-range-row">
                 <label class="elev-range-label">Min<input type="number" id="scatter-elev-min" value="-128" min="-128" max="127" autocomplete="off" /></label>
                 <label class="elev-range-label">Max<input type="number" id="scatter-elev-max" value="127"  min="-128" max="127" autocomplete="off" /></label>
               </div>
-              <div class="group-header">Terrain filter</div>
+              <div class="group-header" data-tip="Toggle terrain types to restrict painting. None active = all terrain.">Terrain filter</div>
               <div id="scatter-terrain-filter" class="terrain-filter-group"></div>
-              <p class="tool-hint">Toggle terrain types to restrict painting. None active = all terrain.</p>
               <div class="group-header">Brush</div>
               <div class="brush-group" id="scatter-brush-group">
                 <button class="brush-btn active" data-brush="0" title="1 cell"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"  fill="currentColor"/></svg></button>
@@ -251,7 +255,7 @@
             </div>
 
             <div id="river-options" class="tool-panel hidden">
-              <div class="group-header">Mode</div>
+              <div class="group-header" id="river-mode-header" data-tip="Hold and drag to place. Shift to erase. Esc cancels.">Mode</div>
               <div class="option-list" id="river-mode-group">
                 <button class="density-btn active" data-river-mode="path">Path</button>
                 <button class="density-btn" data-river-mode="straight">Straight</button>
@@ -259,11 +263,10 @@
                 <button class="density-btn" data-river-mode="downhill">Downhill trace</button>
                 <button class="density-btn" data-river-mode="erase">Erase</button>
               </div>
-              <p class="tool-hint" id="river-hint">Hold and drag to place. Shift to erase. <kbd>Esc</kbd> cancels.</p>
             </div>
 
             <div id="road-options" class="tool-panel hidden">
-              <div class="group-header">Mode</div>
+              <div class="group-header" data-tip="Click start → click end to place. Esc cancels.">Mode</div>
               <div class="brush-group" id="road-mode-group">
                 <button class="brush-btn active" data-road-mode="path" title="Pathfinding">
                   <svg viewBox="0 0 24 24" fill="none">
@@ -280,7 +283,6 @@
                   </svg>
                 </button>
               </div>
-              <p class="tool-hint">Click start → click end to place. <kbd>Esc</kbd> cancels.</p>
               <div id="road-cost-options" class="hidden">
                 <div class="group-header">Costs</div>
                 <label class="toggle-row">
@@ -299,7 +301,7 @@
             </div>
 
             <div id="environment-options" class="tool-panel hidden">
-              <div class="group-header">Time of day</div>
+              <div class="group-header" data-tip="The lower slider sets seconds of real time per full day/night cycle.">Time of day</div>
               <div class="slider-row">
                 <input type="range" id="tod-slider" min="0" max="1435" step="5" value="720" autocomplete="off" />
                 <span class="slider-value" id="tod-value">12:00</span>
@@ -318,7 +320,6 @@
                 <input type="range" id="day-length" min="15" max="600" step="15" value="120" autocomplete="off" />
                 <span class="slider-value" id="day-length-value">120s</span>
               </div>
-              <p class="tool-hint">Seconds of real time per full day/night cycle.</p>
 
               <div class="group-header">Weather</div>
               <div class="segmented" id="weather-type-group">
@@ -331,22 +332,33 @@
                 <input type="range" id="weather-intensity" min="0" max="100" step="5" value="100" autocomplete="off" />
                 <span class="slider-value" id="weather-intensity-value">100%</span>
               </div>
-              <div class="group-header">Wind</div>
+              <div class="group-header" data-tip="One wind for the whole scene, in world units per second. It drifts the cloud deck at exactly this rate and everything else scales off it: the trees and bushes bend, the rain slants, and the ripple pattern marches across open water. Rivers ignore it — their direction is their channel's. Around 3–4 is where the sway reads clearly; below about 1 the scene looks still.">Wind speed</div>
               <div class="slider-row">
-                <input type="range" id="wind-speed" min="0" max="8" step="0.2" value="1.8" autocomplete="off" />
-                <span class="slider-value" id="wind-speed-value">1.8</span>
+                <input type="range" id="wind-speed" min="0" max="8" step="0.2" value="3.4" autocomplete="off" />
+                <span class="slider-value" id="wind-speed-value">3.4</span>
               </div>
+              <div class="group-header" data-tip="The heading the wind blows toward, not the one it comes from. Turns the clouds, the rain slant, the way plants lean, and the drift of the water all together.">Wind direction</div>
               <div class="slider-row">
                 <input type="range" id="wind-dir" min="0" max="355" step="5" value="30" autocomplete="off" />
                 <span class="slider-value" id="wind-dir-value">30°</span>
+              </div>
+              <div class="group-header" data-tip="How far gusts swing the wind either side of its sustained speed, on a roughly seven-second cycle. Gusts reach the plants and the rain but deliberately not the cloud deck — a whole overcast sky doesn't surge in a two-second squall — and they travel across the map as a wave, so you watch one cross a wood tree by tree rather than every tree leaning at once. It is a percentage of the speed above, so at a low wind it has little to work with.">Wind gusts</div>
+              <div class="slider-row">
+                <input type="range" id="wind-gust" min="0" max="100" step="5" value="35" autocomplete="off" />
+                <span class="slider-value" id="wind-gust-value">35%</span>
               </div>
               <label class="toggle-row">
                 <span>Cloud shadows</span>
                 <input type="checkbox" id="weather-clouds" checked />
               </label>
-              <p class="tool-hint">Speed drifts the clouds and streaks the rain; direction is the heading the wind blows toward.</p>
 
-              <div class="group-header">Seasons</div>
+              <div class="group-header" data-tip="Fine procedural mottling on the trees, bushes and rocks. Flat-shaded low-poly plants sit next to ground that carries real texture, and a large facet of one solid colour reads as plastic beside it — this varies the brightness on a scale finer than a facet, so each plane stops being perfectly uniform while its edges stay as crisp as they were. It is not a lighting change and does not soften the low-poly look. The number is peak-to-peak brightness swing, so 18% is about ±9%. 0 switches it off; the top of the range is there for judging the effect rather than shipping at it — somewhere past 30% a canopy stops reading as leaves and starts reading as mould.">Scatter texture</div>
+              <div class="slider-row">
+                <input type="range" id="scatter-texture" min="0" max="80" step="2" value="18" autocomplete="off" />
+                <span class="slider-value" id="scatter-texture-value">18%</span>
+              </div>
+
+              <div class="group-header" data-tip="Snow accumulates where it is cold enough and liquids freeze at their own freeze point. Continental scales the season by latitude and elevation, so winter arrives up the map; whole map turns everywhere at once, for a map that is one region. Days per year sets how many day/night cycles one year takes.">Seasons</div>
               <label class="toggle-row">
                 <span>Enable seasons</span>
                 <input type="checkbox" id="seasons-enable" autocomplete="off" />
@@ -373,7 +385,6 @@
                 <input type="range" id="season-days" min="2" max="24" step="1" value="8" autocomplete="off" />
                 <span class="slider-value" id="season-days-value">8 days</span>
               </div>
-              <p class="tool-hint">Snow accumulates where it is cold enough and liquids freeze at their own freeze point. Continental scales the season by latitude and elevation, so winter arrives up the map; whole map turns everywhere at once, for a map that is one region. Days per year sets how many day/night cycles one year takes.</p>
             </div>
 
             <div id="territory-options" class="tool-panel hidden">
@@ -398,7 +409,6 @@
                 <button id="territory-clear-faction">Clear faction</button>
                 <button id="territory-clear-all">Clear all</button>
               </div>
-              <p class="tool-hint">Ownership is stored in the map's metadata channel, so borders save and load with the map — no companion file.</p>
             </div>
 
             <div id="resource-options" class="tool-panel hidden">
@@ -412,10 +422,9 @@
                 <button class="scatter-type-btn" data-resource-mode="erase" title="Remove any resource">Erase</button>
               </div>
               <label class="toggle-row">
-                <span>Respect placement rules</span>
+                <span class="tip-host" data-tip="Rules come from each type's descriptor — terrain, elevation, river, and coast requirements. Turn them off to place anywhere.">Respect placement rules</span>
                 <input type="checkbox" id="resource-rules" checked />
               </label>
-              <p class="tool-hint">Rules come from each type's descriptor — terrain, elevation, river, and coast requirements. Turn them off to place anywhere.</p>
               <div class="group-header">All cells</div>
               <div class="option-list">
                 <button id="resource-clear-type">Clear type</button>
@@ -425,10 +434,9 @@
 
             <div id="fog-options" class="tool-panel hidden">
               <label class="toggle-row">
-                <span>Fog of war</span>
+                <span class="tip-host" data-tip="Off by default so the whole map stays visible while editing.">Fog of war</span>
                 <input type="checkbox" id="fog-enable" />
               </label>
-              <p class="tool-hint">Off by default so the whole map stays visible while editing.</p>
               <div class="group-header">Mode</div>
               <div class="segmented" id="fog-mode-group">
                 <button class="scatter-type-btn active" data-fog-mode="reveal" title="Mark cells explored">Reveal</button>
@@ -455,7 +463,6 @@
                 <button id="fog-reveal-all">Reveal all</button>
                 <button id="fog-clear-all">Forget all</button>
               </div>
-              <p class="tool-hint">Exploration is per-player state, not map data — it is not part of undo/redo and does not save with the map.</p>
             </div>
           </div>
         </aside>

@@ -6,7 +6,7 @@ import {
 } from '@loyalj/hex-world';
 import { HeightmapPlugin } from './heightmapPlugin.ts';
 import type { HexCoord, TerrainDescriptor, TerrainAssetRegistry, ScatterDescriptor, MapTransaction, MapEdit, LiquidTypeDescriptor, WeatherType, ResourceDescriptor, SeasonScope } from '@loyalj/hex-world';
-import { initScene, FEATURE_LAYERS } from './scene.ts';
+import { initScene, FEATURE_LAYERS, type CameraMode } from './scene.ts';
 import { CommandHistory } from './history.ts';
 import { renderConfigFields } from './configUI.ts';
 import { MapEditCommand } from './commands.ts';
@@ -69,6 +69,14 @@ const toggleShadowsBtn = document.getElementById('toggle-shadows-btn') as HTMLBu
 const shadowsCheck     = document.getElementById('shadows-check')      as HTMLSpanElement;
 const toggleSkyBtn     = document.getElementById('toggle-sky-btn')     as HTMLButtonElement;
 const skyCheck         = document.getElementById('sky-check')          as HTMLSpanElement;
+const toggleGodRaysBtn = document.getElementById('toggle-godrays-btn') as HTMLButtonElement;
+const godRaysCheck     = document.getElementById('godrays-check')      as HTMLSpanElement;
+const toggleSkirtBtn   = document.getElementById('toggle-skirt-btn')   as HTMLButtonElement;
+const skirtCheck       = document.getElementById('skirt-check')        as HTMLSpanElement;
+const cameraRtsBtn     = document.getElementById('camera-rts-btn')     as HTMLButtonElement;
+const cameraFreeBtn    = document.getElementById('camera-free-btn')    as HTMLButtonElement;
+const cameraRtsCheck   = document.getElementById('camera-rts-check')   as HTMLSpanElement;
+const cameraFreeCheck  = document.getElementById('camera-free-check')  as HTMLSpanElement;
 const toggleTerritoryBtn = document.getElementById('toggle-territory-btn') as HTMLButtonElement;
 const territoryCheck     = document.getElementById('territory-check')      as HTMLSpanElement;
 const toggleResourcesBtn = document.getElementById('toggle-resources-btn') as HTMLButtonElement;
@@ -129,8 +137,6 @@ const liquidMenuBtn      = document.getElementById('liquid-menu-btn')        as 
 const docName     = document.getElementById('doc-name')     as HTMLElement;
 const docSize     = document.getElementById('doc-size')     as HTMLElement;
 const drawerTitle = document.getElementById('drawer-title') as HTMLElement;
-const drawerBadge = document.getElementById('drawer-badge') as HTMLElement;
-const drawerHide  = document.getElementById('drawer-hide-btn')       as HTMLButtonElement;
 const drawerToggle = document.getElementById('toggle-drawer-btn')    as HTMLButtonElement;
 const drawerMenuBtn = document.getElementById('toggle-drawer-menu-btn') as HTMLButtonElement;
 const drawerCheck  = document.getElementById('drawer-check')         as HTMLElement;
@@ -141,17 +147,17 @@ const statusElev   = document.getElementById('status-elev')       as HTMLElement
 const statusZoom   = document.getElementById('status-zoom')       as HTMLElement;
 const statusFps    = document.getElementById('status-fps')        as HTMLElement;
 
-/** Tool metadata for the drawer header and the rail ordering badge. */
-const TOOL_META: Record<string, { title: string; badge: string; panel: () => HTMLElement }> = {
-  'paint-terrain': { title: 'Terrain',   badge: '1', panel: () => terrainOptions },
-  'elevation':     { title: 'Elevation', badge: '2', panel: () => elevOptions },
-  'paint-river':   { title: 'River',     badge: '3', panel: () => riverOptions },
-  'paint-road':    { title: 'Road',      badge: '4', panel: () => roadOptions },
-  'paint-scatter': { title: 'Scatter',   badge: '5', panel: () => scatterOptions },
-  'environment':   { title: 'Environment', badge: '6', panel: () => environmentOptions },
-  'paint-territory': { title: 'Territory', badge: '7', panel: () => territoryOptions },
-  'paint-resource':  { title: 'Resources', badge: '8', panel: () => resourceOptions },
-  'paint-fog':       { title: 'Fog of war', badge: '9', panel: () => fogOptions },
+/** Tool metadata for the drawer header. */
+const TOOL_META: Record<string, { title: string; panel: () => HTMLElement }> = {
+  'paint-terrain': { title: 'Terrain',   panel: () => terrainOptions },
+  'elevation':     { title: 'Elevation', panel: () => elevOptions },
+  'paint-river':   { title: 'River',     panel: () => riverOptions },
+  'paint-road':    { title: 'Road',      panel: () => roadOptions },
+  'paint-scatter': { title: 'Scatter',   panel: () => scatterOptions },
+  'environment':   { title: 'Environment', panel: () => environmentOptions },
+  'paint-territory': { title: 'Territory', panel: () => territoryOptions },
+  'paint-resource':  { title: 'Resources', panel: () => resourceOptions },
+  'paint-fog':       { title: 'Fog of war', panel: () => fogOptions },
 };
 
 /** User's drawer preference — the rail/View toggles flip it, tool switches don't. */
@@ -163,7 +169,6 @@ function updateLeftPanel(): void {
   }
   const meta = TOOL_META[activeTool];
   drawerTitle.textContent = meta?.title ?? '';
-  drawerBadge.textContent = meta?.badge ?? '';
   leftPanel.classList.toggle('hidden', !drawerOpen);
   drawerCheck.classList.toggle('hidden', !drawerOpen);
 }
@@ -278,6 +283,10 @@ history.onChange = () => {
   redoBtn.disabled = !history.canRedo;
   refreshDocStrip();
   minimap.invalidate();
+  // Same reasoning as the minimap: every mutation funnels through the history,
+  // and recutting the perimeter is cheap enough not to be worth deciding
+  // whether this particular edit reached a boundary cell.
+  scene.refreshSkirt();
 };
 undoBtn.addEventListener('click', () => history.undo());
 redoBtn.addEventListener('click', () => history.redo());
@@ -491,11 +500,64 @@ function buildSwatchRow(desc: TerrainDescriptor): HTMLButtonElement {
   return btn;
 }
 
-/** A labelled palette section: header row, swatch grid, and a "new type" tile. */
+/** A hover/focus tooltip trigger — a subtle glyph that reveals `text` on a card. */
+function buildInfoTip(text: string): HTMLElement {
+  const tip = document.createElement('span');
+  tip.className = 'info-tip';
+  tip.tabIndex = 0;
+  tip.setAttribute('aria-label', text);
+  tip.innerHTML =
+    '<svg viewBox="0 0 16 16" aria-hidden="true">'
+    + '<circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.2"/>'
+    + '<path d="M8 7.2v4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
+    + '<circle cx="8" cy="4.9" r="0.85" fill="currentColor"/>'
+    + '</svg>';
+  const panel = document.createElement('span');
+  panel.className = 'info-tip-panel';
+  panel.setAttribute('role', 'tooltip');
+  panel.textContent = text;
+  tip.appendChild(panel);
+
+  // The panel is fixed-position so the drawer's scroll box can't clip it; that
+  // means placing it by hand, flipping above the glyph when the bottom is tight.
+  const place = (): void => {
+    const anchor = tip.getBoundingClientRect();
+    const box = panel.getBoundingClientRect();
+    let top = anchor.bottom + 7;
+    if (top + box.height > window.innerHeight - 8) top = Math.max(8, anchor.top - 7 - box.height);
+    const left = Math.max(8, Math.min(anchor.left - 4, window.innerWidth - 8 - box.width));
+    panel.style.top  = `${top}px`;
+    panel.style.left = `${left}px`;
+  };
+  tip.addEventListener('pointerenter', place);
+  tip.addEventListener('focus', place);
+  // Several tips live inside <label>s, where a stray click would flip the checkbox.
+  tip.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); });
+  return tip;
+}
+
+/** Turn every `data-tip="…"` marker in the static markup into a tooltip glyph. */
+function hydrateInfoTips(): void {
+  document.querySelectorAll<HTMLElement>('[data-tip]').forEach(host => {
+    const text = host.dataset['tip'];
+    host.removeAttribute('data-tip');
+    if (text) host.appendChild(buildInfoTip(text));
+  });
+}
+
+/** Replace the text of an already-hydrated tip (the river hint tracks the mode). */
+function setInfoTipText(host: HTMLElement, text: string): void {
+  const tip = host.querySelector<HTMLElement>('.info-tip');
+  if (!tip) return;
+  tip.setAttribute('aria-label', text);
+  tip.querySelector('.info-tip-panel')!.textContent = text;
+}
+
+/** A labelled palette section: header row and swatch grid. */
 function buildPaletteSection(
   label: string,
   descriptors: TerrainDescriptor[],
-  opts: { hint?: string; action?: { label: string; onClick: () => void }; presetLiquid?: string },
+  opts: { tip?: string } = {},
 ): HTMLElement {
   const section = document.createElement('div');
   section.className = 'pal-section';
@@ -506,31 +568,12 @@ function buildPaletteSection(
   heading.className = 'pal-head-label';
   heading.textContent = label;
   head.appendChild(heading);
-  if (opts.hint) {
-    const hint = document.createElement('div');
-    hint.className = 'pal-head-hint';
-    hint.textContent = opts.hint;
-    head.appendChild(hint);
-  }
-  if (opts.action) {
-    const action = document.createElement('button');
-    action.className = 'link-btn';
-    action.textContent = opts.action.label;
-    action.addEventListener('click', opts.action.onClick);
-    head.appendChild(action);
-  }
+  if (opts.tip) head.appendChild(buildInfoTip(opts.tip));
   section.appendChild(head);
 
   const grid = document.createElement('div');
   grid.className = 'pal-grid';
   for (const desc of descriptors) grid.appendChild(buildSwatchRow(desc));
-
-  const addBtn = document.createElement('button');
-  addBtn.className = 'swatch-add';
-  addBtn.title = `Add ${label.toLowerCase()} terrain type`;
-  addBtn.innerHTML = '<span class="swatch-add-plus">+</span><span>New type</span>';
-  addBtn.addEventListener('click', () => openTerrainDialog(null, opts.presetLiquid));
-  grid.appendChild(addBtn);
 
   section.appendChild(grid);
   return section;
@@ -543,15 +586,11 @@ function renderTerrainPalette(): void {
   group.appendChild(buildPaletteSection(
     'Solid',
     terrainDescriptors.filter(d => !d.liquidType),
-    { hint: 'Alt+click samples' },
+    { tip: 'Alt+click samples the cell under the cursor. Click the lock on a swatch to keep it.' },
   ));
   group.appendChild(buildPaletteSection(
     'Liquid',
     terrainDescriptors.filter(d => d.liquidType),
-    {
-      action: { label: 'Edit', onClick: () => openLiquidDialog() },
-      presetLiquid: liquidDescriptors[0]?.id,
-    },
   ));
 
   renderScatterTerrainFilter();
@@ -560,6 +599,7 @@ function renderTerrainPalette(): void {
   minimap.invalidate();
 }
 renderTerrainPalette();
+hydrateInfoTips();
 
 function renderScatterTerrainFilter(): void {
   const group = document.getElementById('scatter-terrain-filter')!;
@@ -879,13 +919,13 @@ elevModeBtns.forEach(btn => {
 });
 
 const RIVER_HINTS: Record<string, string> = {
-  path:     'Hold and drag to place. Shift to erase. <kbd>Esc</kbd> cancels.',
-  straight: 'Hold and drag to place. Shift to erase. <kbd>Esc</kbd> cancels.',
-  waypoint: 'Click to place waypoints. Double-click or <kbd>↵</kbd> to commit. <kbd>Esc</kbd> cancels.',
+  path:     'Hold and drag to place. Shift to erase. Esc cancels.',
+  straight: 'Hold and drag to place. Shift to erase. Esc cancels.',
+  waypoint: 'Click to place waypoints. Double-click or Enter to commit. Esc cancels.',
   downhill: 'Click a cell to auto-trace downhill to nearest water.',
   erase:    'Click or drag to remove rivers from cells.',
 };
-const riverHintEl = document.getElementById('river-hint')!;
+const riverModeHeader = document.getElementById('river-mode-header')!;
 const riverModeBtns = document.querySelectorAll<HTMLButtonElement>('#river-mode-group .density-btn');
 riverModeBtns.forEach(btn => {
   btn.addEventListener('click', () => {
@@ -893,7 +933,7 @@ riverModeBtns.forEach(btn => {
     riverMode = btn.dataset['riverMode'] as RiverMode;
     riverModeBtns.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    riverHintEl.innerHTML = RIVER_HINTS[riverMode] ?? '';
+    setInfoTipText(riverModeHeader, RIVER_HINTS[riverMode] ?? '');
   });
 });
 
@@ -922,6 +962,10 @@ const windSpeedEl   = document.getElementById('wind-speed')       as HTMLInputEl
 const windSpeedVal  = document.getElementById('wind-speed-value') as HTMLElement;
 const windDirEl     = document.getElementById('wind-dir')         as HTMLInputElement;
 const windDirVal    = document.getElementById('wind-dir-value')   as HTMLElement;
+const windGustEl    = document.getElementById('wind-gust')        as HTMLInputElement;
+const windGustVal   = document.getElementById('wind-gust-value')  as HTMLElement;
+const scatterTexEl  = document.getElementById('scatter-texture')       as HTMLInputElement;
+const scatterTexVal = document.getElementById('scatter-texture-value') as HTMLElement;
 const weatherClouds = document.getElementById('weather-clouds')   as HTMLInputElement;
 const todPresetBtns  = document.querySelectorAll<HTMLButtonElement>('#tod-preset-group button');
 const weatherTypeBtns = document.querySelectorAll<HTMLButtonElement>('#weather-type-group button');
@@ -990,11 +1034,26 @@ weatherIntEl.addEventListener('input', () => {
 const onWindChange = (): void => {
   windSpeedVal.textContent = Number(windSpeedEl.value).toFixed(1);
   windDirVal.textContent   = `${windDirEl.value}°`;
+  windGustVal.textContent  = `${windGustEl.value}%`;
   const { windX, windY } = windVector();
   scene.setWind(windX, windY);
+  scene.setGustiness(Number(windGustEl.value) / 100);
 };
 windSpeedEl.addEventListener('input', onWindChange);
 windDirEl.addEventListener('input', onWindChange);
+windGustEl.addEventListener('input', onWindChange);
+
+const onScatterTexChange = (): void => {
+  scatterTexVal.textContent = `${scatterTexEl.value}%`;
+  scene.setScatterTexture(Number(scatterTexEl.value) / 100);
+};
+scatterTexEl.addEventListener('input', onScatterTexChange);
+// The attach default and the slider agree at 18%, but push anyway rather than
+// relying on that — the two live in different files and drift silently.
+onScatterTexChange();
+// Same reasoning as the applyWeather() call below — the sliders' opening values
+// have to reach the scene, or the panel reads 35% gust over a steady wind.
+onWindChange();
 
 weatherClouds.addEventListener('change', applyWeather);
 
@@ -1302,7 +1361,6 @@ addTerrainMenuBtn.addEventListener('click', () => openTerrainDialog(null));
 liquidMenuBtn.addEventListener('click', () => openLiquidDialog());
 
 // ---- Tool drawer visibility ----
-drawerHide.addEventListener('click', () => setDrawerOpen(false));
 drawerToggle.addEventListener('click', () => setDrawerOpen(!drawerOpen));
 drawerMenuBtn.addEventListener('click', () => setDrawerOpen(!drawerOpen));
 
@@ -1326,6 +1384,35 @@ toggleSkyBtn.addEventListener('click', () => {
   scene.setSky(skyVisible);
   skyCheck.classList.toggle('hidden', !skyVisible);
 });
+
+let godRaysEnabled = true; // scene starts with the shafts on
+toggleGodRaysBtn.addEventListener('click', () => {
+  godRaysEnabled = !godRaysEnabled;
+  scene.setGodRays(godRaysEnabled);
+  godRaysCheck.classList.toggle('hidden', !godRaysEnabled);
+});
+
+let skirtEnabled = true; // scene starts with the map sitting on its plinth
+toggleSkirtBtn.addEventListener('click', () => {
+  skirtEnabled = !skirtEnabled;
+  scene.setSkirt(skirtEnabled);
+  skirtCheck.classList.toggle('hidden', !skirtEnabled);
+});
+
+// Camera mode is a radio, not a toggle: exactly one check is ever showing, and
+// re-picking the mode already in force is a no-op rather than a flip.
+function setCameraMode(mode: CameraMode): void {
+  scene.setCameraMode(mode);
+  cameraRtsCheck.classList.toggle('hidden',  mode !== 'rts');
+  cameraFreeCheck.classList.toggle('hidden', mode !== 'free');
+}
+// The parent row only opens the flyout on hover — clicking it must not fall
+// through to the document handler that closes the whole menu bar.
+(document.getElementById('camera-mode-btn') as HTMLButtonElement)
+  .addEventListener('click', e => e.stopPropagation());
+cameraRtsBtn.addEventListener('click',  () => setCameraMode('rts'));
+cameraFreeBtn.addEventListener('click', () => setCameraMode('free'));
+setCameraMode(scene.cameraMode); // paint the checks from the scene's opening mode
 
 let territoryVisible = true;
 toggleTerritoryBtn.addEventListener('click', () => {

@@ -165,6 +165,38 @@ body {
   margin: 4px 8px;
 }
 
+/* Flyout submenu. Opened on hover rather than by the menu controller, which
+   only knows about top-level .menu-panel elements — keeping the nested panel
+   off that class is what stops closeMenus() and the panel lookup tripping
+   over it. The padding bridge under the item means the pointer can travel
+   diagonally into the flyout without falling through the gap. */
+.menu-submenu { position: relative; }
+
+.menu-arrow {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--fg-muted);
+}
+
+.menu-submenu:hover > .menu-item { background: var(--accent-soft); color: var(--accent-fg); }
+
+.submenu-panel {
+  display: none;
+  position: absolute;
+  left: calc(100% - 2px);
+  top: -6px;
+  width: 168px;
+  padding: 6px 6px 6px 12px;
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-menu);
+  flex-direction: column;
+  gap: 2px;
+  z-index: 201;
+}
+
+.menu-submenu:hover > .submenu-panel { display: flex; }
+
 /* ============================================================
    Main area — floating panels on a 10px gutter
    ============================================================ */
@@ -266,19 +298,6 @@ body {
   font-size: 12px;
   font-weight: 500;
 }
-
-.link-btn {
-  border: none;
-  background: none;
-  padding: 0;
-  font: inherit;
-  font-size: 14px;
-  color: var(--accent-fg);
-  cursor: pointer;
-}
-
-.link-btn:hover { color: var(--fg); }
-.link-btn.at-end { margin-left: auto; }
 
 #drawer-body {
   flex: 1;
@@ -468,7 +487,7 @@ body {
 .pal-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
 }
 
 .pal-head-label {
@@ -477,9 +496,52 @@ body {
   color: var(--fg-muted);
 }
 
-.pal-head-hint {
+/* ---- Hover tooltip ---- */
+
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-subtle);
+  cursor: help;
+}
+
+.info-tip svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+
+.info-tip:hover,
+.info-tip:focus-visible { color: var(--fg-2); outline: none; }
+
+/* Fixed, and placed by buildInfoTip() — the drawer's scroll box would clip it. */
+.info-tip-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 400;
+  width: max-content;
+  max-width: 260px;
+  padding: 8px 10px;
+  border-radius: var(--r-control);
+  background: var(--surface-3);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.45);
+  color: var(--fg-2);
   font-size: 12px;
-  color: var(--fg-muted);
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.info-tip:hover .info-tip-panel,
+.info-tip:focus-visible .info-tip-panel {
+  opacity: 1;
+  visibility: visible;
 }
 
 .pal-grid {
@@ -556,28 +618,6 @@ body {
 .swatch-row--locked .swatch-name { color: var(--fg-subtle); }
 .swatch-row--locked .swatch-chip { opacity: 0.45; }
 
-.swatch-add {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 9px 11px;
-  border: none;
-  border-radius: var(--r-control);
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--surface-3);
-  color: var(--fg-muted);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.swatch-add:hover {
-  box-shadow: inset 0 0 0 1px var(--segment);
-  color: var(--fg-2);
-}
-
-.swatch-add-plus { font-size: 15px; line-height: 1; }
-
 /* ---- Scatter terrain filter ---- */
 
 .terrain-filter-group {
@@ -614,11 +654,21 @@ body {
 }
 
 .group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   font-weight: 500;
   color: var(--fg-muted);
   margin-top: 22px;
   margin-bottom: 9px;
+}
+
+/* Any inline label that carries an .info-tip alongside its text */
+.tip-host {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .tool-panel > .group-header:first-child,
@@ -713,22 +763,6 @@ body {
 /* Note: main.ts still selects tool options by their original .scatter-type-btn
    and .density-btn classes. Their appearance now comes from the .segmented /
    .option-list container they sit in, so those classes carry no styles. */
-
-.tool-hint {
-  margin: 9px 0 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--fg-muted);
-}
-
-.tool-hint kbd {
-  font-family: inherit;
-  font-size: 11px;
-  background: var(--surface-2);
-  border-radius: 5px;
-  padding: 1px 5px;
-  color: var(--fg-2);
-}
 
 /* Slider + value readout on one row */
 

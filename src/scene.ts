@@ -4,7 +4,8 @@ import {
   loadHexPack, formatSeason, cameraGroundFootprint,
   DEFAULT_RESOURCE_DESCRIPTORS,
   offsetToHex, hexToOffset, hexRange,
-  attachSeasonalTint, createRockMaterial,
+  attachSeasonalTint, attachWindSway, attachScatterTexture, styleScatterTexture,
+  createRockMaterial,
   createPineGeometry, createBroadleafGeometry, createBushGeometry,
   BROADLEAF_CANOPY_COLOR, BUSH_COLOR,
 } from '@loyalj/hex-world';
@@ -13,6 +14,20 @@ import type {
   LiquidTypeDescriptor, WeatherType, FactionDescriptor, ResourceDescriptor,
   TerritoryLayer, ResourceLayer, HexLayout, SeasonScope,
 } from '@loyalj/hex-world';
+
+/** How much freedom the camera has. See {@link EditorScene.setCameraMode}. */
+export type CameraMode = 'rts' | 'free';
+
+/**
+ * The two presets behind the View ▸ Camera switch. `rts` is what the editor
+ * shipped with; `free` exists because a tilt floor above roughly half the
+ * vertical FOV never lets the horizon into frame, which silently hides the sky
+ * dome's best hours, sunsets, and the god rays.
+ */
+const CAMERA_MODES: Record<CameraMode, { minPitch: number; maxPitch: number; yaw: boolean }> = {
+  rts:  { minPitch: 30, maxPitch: 66, yaw: false },
+  free: { minPitch: 6,  maxPitch: 80, yaw: true  },
+};
 
 const MAP_WIDTH    = 100;
 const MAP_HEIGHT   = 100;
@@ -71,8 +86,23 @@ export interface SceneApi {
   setWeather(type: WeatherType, opts: WeatherSettings): void;
   /** Ramp the current weather 0–1 without rebuilding it. */
   setWeatherIntensity(intensity: number): void;
-  /** Re-aim the wind that drifts the clouds and blows the precipitation. */
+  /**
+   * Re-aim the world's shared wind — the one vector behind cloud drift, rain
+   * slant, plant sway, and the ripples marching across open water.
+   */
   setWind(x: number, y: number): void;
+  /**
+   * How hard the wind gusts either side of that sustained vector, 0–1. Gusts
+   * reach the plants and the rain but not the cloud deck: a whole overcast sky
+   * doesn't surge in a two-second squall.
+   */
+  setGustiness(gustiness: number): void;
+  /**
+   * Peak-to-peak brightness mottling on the scatter plants and rocks, 0–1 —
+   * what stops a flat-shaded canopy reading as plastic beside textured ground.
+   * 0 switches it off and gives back the flat colour.
+   */
+  setScatterTexture(strength: number): void;
   // --- Fog of war ---
   /** The fog state, or null while fog is switched off. Sized to the current map. */
   readonly fog: FogData | null;
@@ -92,9 +122,40 @@ export interface SceneApi {
   readonly fogStats: { explored: number; total: number };
 
   // --- Sky ---
+  // --- Camera ---
+  /**
+   * Swap how much freedom the camera has. `'rts'` is the classic constrained
+   * view — heading pinned looking down −Z, tilt held between 30° and 66°.
+   * `'free'` unlocks the heading and lets the tilt drop to 6°, low enough to
+   * put the horizon (and so the sky, sunsets, and god rays) on screen.
+   */
+  setCameraMode(mode: CameraMode): void;
+  readonly cameraMode: CameraMode;
+
+  /**
+   * The wall of cut earth that gives the map a bottom and four sides. Without
+   * it, a low camera angle looks straight under the terrain, which is a
+   * surface rather than a solid.
+   */
+  setSkirt(enabled: boolean): void;
+  readonly skirtEnabled: boolean;
+  /**
+   * Recut the skirt from the current map. Only the perimeter is rebuilt, so
+   * this is cheap enough to run after every edit rather than working out
+   * whether the edit touched a boundary cell.
+   */
+  refreshSkirt(): void;
+
   /** Gradient sky dome plus the matching distance haze on every material. */
   setSky(enabled: boolean): void;
   readonly skyEnabled: boolean;
+  /**
+   * Crepuscular shafts fanning out from the sun past the ridgelines. Only
+   * visible with the sun up and in front of the camera, so scrub the time of
+   * day toward dawn or dusk and face the sun to see them at their strongest.
+   */
+  setGodRays(enabled: boolean): void;
+  readonly godRaysEnabled: boolean;
 
   // --- Seasons ---
   /** Seasons, snow accumulation, and per-liquid ice. Builds the climate on first use. */
@@ -167,6 +228,10 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
   // Scatter — conifers on 3 density tiers (layer 0). No seasonal tint: a pine
   // that stays green through October is what tells it from the broadleaf below.
   const pineMat = new THREE.MeshLambertMaterial({ color: 0x3f6b2c });
+  // A stiff conifer barely moves — which is exactly why it gets the call. Wind
+  // sway is opt-in per material for the same reason the seasonal tint is, and
+  // the rock below deliberately never receives it.
+  attachWindSway(pineMat, { height: 2.0, stiffness: 2.6, amplitude: 0.035, flutter: 0.2 });
   const pineDefinition: ScatterDefinition = {
     id:         'pine',
     name:       'Pine Trees',
@@ -220,6 +285,7 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
   // Blossom rides along with the tint — a share of the wood flowers pink or
   // blue as spring passes through, then goes green for the summer.
   attachSeasonalTint(broadleafMat, { summer: BROADLEAF_CANOPY_COLOR, blossomShare: 0.6 });
+  attachWindSway(broadleafMat, { height: 1.9, stiffness: 2.0, amplitude: 0.07 });
   const broadleafDefinition: ScatterDefinition = {
     id:           'broadleaf',
     name:         'Broadleaf Trees',
@@ -238,6 +304,9 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
   attachSeasonalTint(bushMat, {
     summer: BUSH_COLOR, select: 0, variance: 0.35, blossomShare: 0.3,
   });
+  // Short, soft and mostly leaf, so it moves far more of its own height than a
+  // tree does — and bows from near the base rather than holding a trunk stiff.
+  attachWindSway(bushMat, { height: 0.6, stiffness: 1.2, amplitude: 0.125, flutter: 0.6 });
   const bushDefinition: ScatterDefinition = {
     id:           'bush',
     name:         'Bushes',
@@ -249,6 +318,16 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
       [{ geometry: createBushGeometry(0.45), material: bushMat, yOffset: 0 }],
     ],
   };
+
+  // Flat-shaded low-poly plants read as plastic beside ground that carries real
+  // triplanar texture, so break each facet up with fine procedural mottling.
+  // Scale tracks facet size rather than plant size: a pine's cone is one long
+  // smooth sweep and takes the coarsest pattern, a bush's lobes are tiny and
+  // take the finest. The rock is here too — stone is what most wants grain.
+  const scatterTextured: Array<[THREE.Material, number]> = [
+    [pineMat, 5], [broadleafMat, 6], [bushMat, 11], [rockMat, 9],
+  ];
+  for (const [mat, scale] of scatterTextured) attachScatterTexture(mat, { scale });
 
   const world = await HexWorld.create({
     container,
@@ -265,7 +344,27 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     // On by default: purely visual, and the map edge fading into atmosphere is
     // how the engine is meant to look. Toggle under View.
     sky: true,
-    camera: { initialDistance: 60, minPitch: 30, maxPitch: 66, minDistance: 6, maxDistance: 80 },
+    // Also free outside daylight — the pass skips itself whenever the sun is
+    // down, behind the camera, or under cloud.
+    godRays: true,
+    // The whole point of a free camera is looking along the ground, which is
+    // exactly the angle that shows the map has no underside.
+    skirt: true,
+    // On, so the Environment ▸ Wind sliders reach the plants and the water and
+    // not just the clouds. The starting vector matches the panel's own defaults
+    // (3.4 u/s at 30°) so the sliders read true before anything is touched —
+    // mid-slider rather than the old light breeze, because at 1.8 the sway is
+    // about 3% of a tree's height and the feature looks switched off.
+    wind: { heading: (30 * Math.PI) / 180, speed: 3.4 },
+    // Opens in 'free' — the limits here have to match CAMERA_MODES.free or the
+    // View ▸ Camera check would be lying until the first switch.
+    camera: {
+      initialDistance: 60,
+      minPitch: CAMERA_MODES.free.minPitch,
+      maxPitch: CAMERA_MODES.free.maxPitch,
+      minDistance: 6,
+      maxDistance: 80,
+    },
   });
 
   // Territory and resources read the map's metadata channel, so they cost
@@ -281,6 +380,9 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
   let hideUnexplored   = true;
   let dimExplored      = true;
   let skyEnabled       = true;
+  let godRaysEnabled   = true;
+  let skirtEnabled     = true;
+  let cameraMode: CameraMode = 'free';
   let seasonsEnabled   = false;
   let seasonDaysPerYear = 8;
   let seasonScope: SeasonScope = 'continental';
@@ -318,7 +420,11 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     get chunks() { return world.chunks; },
     hoveredCell: null,
     brushRadius: 0,
-    reload() { world.chunks.dispose(); },
+    reload() {
+      world.chunks.dispose();
+      world.skirt?.rebuild();
+    },
+    refreshSkirt() { world.skirt?.rebuild(); },
     replaceMap(newMap: HexMap): void {
       world.setMap(newMap);
       // A different map means a different size and a different explored set;
@@ -370,12 +476,37 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
       };
     },
 
+    // --- Camera ---
+    setCameraMode(mode: CameraMode): void {
+      cameraMode = mode;
+      const preset = CAMERA_MODES[mode];
+      world.controls.setPitchLimits(preset.minPitch, preset.maxPitch);
+      // Order matters: locking the yaw also aims it back at 0, and doing that
+      // after the pitch clamp means both glide to the new mode together.
+      world.controls.setYawEnabled(preset.yaw);
+    },
+    get cameraMode(): CameraMode { return cameraMode; },
+
+    setSkirt(enabled: boolean): void {
+      skirtEnabled = enabled;
+      world.skirt?.setEnabled(enabled);
+    },
+    get skirtEnabled(): boolean { return skirtEnabled; },
+
     // --- Sky ---
     setSky(enabled: boolean): void {
       skyEnabled = enabled;
       world.setSky(enabled);
+      // The rays read their overcast off the dome and keep it out of their
+      // occlusion pass, so they have to be told when it comes and goes.
+      world.godRays?.attachSky(world.sky);
     },
     get skyEnabled(): boolean { return skyEnabled; },
+    setGodRays(enabled: boolean): void {
+      godRaysEnabled = enabled;
+      world.godRays?.setEnabled(enabled);
+    },
+    get godRaysEnabled(): boolean { return godRaysEnabled; },
 
     // --- Seasons ---
     setSeasonsEnabled(enabled: boolean): void {
@@ -465,8 +596,20 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
       world.weather?.setIntensity(intensity);
     },
     setWind(x: number, y: number): void {
-      wind.set(x, y);
-      world.weather?.wind.copy(wind);
+      // Straight onto the world's shared wind rather than the weather's copy:
+      // it exists from construction (so this works before any setWeather call),
+      // and it is the same vector the trees and the water read.
+      world.wind.base.set(x, y);
+    },
+    setGustiness(gustiness: number): void {
+      world.wind.gustiness = gustiness;
+    },
+    setScatterTexture(strength: number): void {
+      // One strength across all four, but each keeps the scale it was attached
+      // with — the slider is "how much", not "how fine".
+      for (const [mat] of scatterTextured) {
+        styleScatterTexture(mat, { strength, enabled: strength > 0 });
+      }
     },
     // --- Minimap ---
     get layout(): HexLayout { return world.layout; },
