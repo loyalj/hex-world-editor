@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -25,5 +26,10 @@ export default defineConfig({
       // Allow serving library source from outside the editor root in dev.
       allow: ['.', '..'],
     },
+  },
+  test: {
+    // Pure-logic tests run in node; DOM-dependent files opt into happy-dom
+    // with a `// @vitest-environment happy-dom` comment on their first line.
+    environment: 'node',
   },
 });

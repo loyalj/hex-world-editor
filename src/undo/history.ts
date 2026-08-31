@@ -1,6 +1,13 @@
 export interface Command {
   execute(): void;
   undo(): void;
+  /**
+   * True for commands over state that isn't part of the saved document
+   * (selection gestures). They ride the same stack — one Ctrl+Z stream —
+   * but are excluded from {@link CommandHistory.documentDepth}, so they
+   * never count as unsaved changes.
+   */
+  readonly transient?: boolean;
 }
 
 export class CommandHistory {
@@ -51,4 +58,11 @@ export class CommandHistory {
 
   /** Number of applied edits. Compare against a saved value to detect unsaved changes. */
   get depth(): number { return this.undoStack.length; }
+
+  /** Applied edits that touch the saved document — transient commands don't count. */
+  get documentDepth(): number {
+    let n = 0;
+    for (const cmd of this.undoStack) if (!cmd.transient) n++;
+    return n;
+  }
 }

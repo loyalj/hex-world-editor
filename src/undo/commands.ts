@@ -39,3 +39,30 @@ export class MapEditCommand implements Command {
     this.afterApply?.();
   }
 }
+
+/**
+ * Undo/redo for one selection-mask gesture, snapshot-based: either direction
+ * replaces the whole set. Takes a restore callback rather than the model so
+ * the undo layer stays free of selection imports. Transient — the selection
+ * isn't part of the saved document, so these entries ride the stack without
+ * counting as unsaved changes.
+ */
+export class SelectionCommand implements Command {
+  readonly transient = true;
+  private readonly restore: (keys: ReadonlySet<number>) => void;
+  private readonly before: ReadonlySet<number>;
+  private readonly after: ReadonlySet<number>;
+
+  constructor(
+    restore: (keys: ReadonlySet<number>) => void,
+    before: ReadonlySet<number>,
+    after: ReadonlySet<number>,
+  ) {
+    this.restore = restore;
+    this.before  = before;
+    this.after   = after;
+  }
+
+  execute(): void { this.restore(this.after); }
+  undo(): void { this.restore(this.before); }
+}

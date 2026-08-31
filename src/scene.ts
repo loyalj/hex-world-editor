@@ -3,7 +3,7 @@ import {
   HexMap, HexWorld, ChunkManager, FogData,
   loadHexPack, formatSeason, cameraGroundFootprint,
   DEFAULT_RESOURCE_DESCRIPTORS,
-  offsetToHex, hexToOffset, hexRange,
+  offsetToHex, hexToOffset, hexRange, hexCorners, hexNeighbor, ELEVATION_SCALE,
   attachSeasonalTint, attachWindSway, attachScatterTexture, styleScatterTexture,
   createRockMaterial,
   createPineGeometry, createBroadleafGeometry, createBushGeometry,
@@ -14,9 +14,35 @@ import type {
   LiquidTypeDescriptor, WeatherType, FactionDescriptor, ResourceDescriptor,
   TerritoryLayer, ResourceLayer, HexLayout, SeasonScope,
 } from '@loyalj/hex-world';
+import { computeElevationRanges, heatmapColor, contourThresholds } from './analysis.ts';
+import { SelectionModel } from './selection.ts';
 
 /** How much freedom the camera has. See {@link EditorScene.setCameraMode}. */
 export type CameraMode = 'rts' | 'free';
+
+/** Pack `count` bits (read via `get`) into a base64 string. */
+export function encodeBits(count: number, get: (i: number) => boolean): string {
+  const bytes = new Uint8Array(Math.ceil(count / 8));
+  for (let i = 0; i < count; i++) {
+    if (get(i)) bytes[i >> 3] |= 1 << (i & 7);
+  }
+  // Chunked conversion: one spread of a large map's bitmask overflows the
+  // argument limit.
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+/** Unpack a base64 bitmask from {@link encodeBits}, calling `set` for every 1-bit. */
+export function decodeBits(b64: string, count: number, set: (i: number) => void): void {
+  const bin = atob(b64);
+  const bytes = Math.min(bin.length, Math.ceil(count / 8));
+  for (let i = 0; i < count && (i >> 3) < bytes; i++) {
+    if ((bin.charCodeAt(i >> 3) & (1 << (i & 7))) !== 0) set(i);
+  }
+}
 
 /**
  * The two presets behind the View ▸ Camera switch. `rts` is what the editor
@@ -70,10 +96,27 @@ export interface SceneApi {
   readonly chunks: ChunkManager;
   hoveredCell: { col: number; row: number } | null;
   brushRadius: number;
+  /**
+   * Whether the hover footprint should flag cells the selection mask excludes
+   * (dim red tint). The tool manager keeps it in sync with the active tool —
+   * false for tools the mask doesn't confine.
+   */
+  hoverMaskFeedback: boolean;
   isWater(terrain: number): boolean;
   terrainLookup: Map<number, TerrainDefinition>;
   /** Show or hide the shader hex grid overlay (survives terrain material swaps). */
   setHexGrid(visible: boolean): void;
+  // --- Analysis overlays ---
+  /** Tint every cell by elevation — hypsometric ramp on land, depth blues on water. */
+  setElevationHeatmap(visible: boolean): void;
+  /** Iso-elevation outlines at round intervals chosen from the map's range. */
+  setContourLines(visible: boolean): void;
+  /**
+   * Rebuild whichever analysis overlays are on from the current map. Cheap
+   * no-op while both are off, so callers may fire it on every commit the same
+   * way the skirt and minimap are refreshed.
+   */
+  refreshAnalysisOverlays(): void;
   /** Enable or disable sun shadows (materials recompile automatically). */
   setShadows(enabled: boolean): void;
   /** Time of day 0–1 (0 = midnight, 0.5 = noon) — follows the clock while it runs. */
@@ -120,6 +163,14 @@ export interface SceneApi {
   setAllFog(explored: boolean): void;
   /** Explored-cell count and map total, for the status strip. */
   readonly fogStats: { explored: number; total: number };
+  /**
+   * Base64 bitmask of explored cells, row-major — readable even while the fog
+   * layer is toggled off, so saves don't lose exploration. Null when fog was
+   * never touched on this map.
+   */
+  fogExploredBase64(): string | null;
+  /** Replace exploration from a {@link fogExploredBase64} snapshot. Does not enable the layer. */
+  setFogExplored(b64: string): void;
 
   // --- Sky ---
   // --- Camera ---
@@ -175,6 +226,25 @@ export interface SceneApi {
   /** Human-readable season name for the current phase, e.g. "late spring". */
   readonly seasonLabel: string;
 
+  // --- Selection ---
+  /**
+   * The editor's selection mask — a set of cells the selection tools build and
+   * other tools may honour as a constraint. Pure view/tool state: never part
+   * of the map, the save file, or the undo history. Cleared on map replace.
+   */
+  readonly selection: SelectionModel;
+  /**
+   * In-progress marquee/lasso footprint, drawn over the committed selection.
+   * Subtract gestures render in the removal tint. Pass null to hide.
+   */
+  setSelectionPreview(cells: Array<{ col: number; row: number }> | null, subtract?: boolean): void;
+  /**
+   * Rebuild the selection highlight from the current map — needed after edits
+   * that move the ground under it (the fill and ants sit at surface height).
+   * Cheap no-op while nothing is selected.
+   */
+  refreshSelectionHighlight(): void;
+
   // --- Territory ---
   readonly territory: TerritoryLayer | null;
   readonly factions: FactionDescriptor[];
@@ -186,6 +256,11 @@ export interface SceneApi {
   readonly resources: ResourceLayer | null;
   readonly resourceDescriptors: ResourceDescriptor[];
   setResourcesVisible(visible: boolean): void;
+  /** Replace the resource type set (names/colors/rules). Placed deposits are untouched. */
+  setResourceDescriptors(descriptors: ResourceDescriptor[]): void;
+
+  /** Show or hide all scatter features (trees, rocks, bushes); the layers underneath keep their data. */
+  setScatterVisible(visible: boolean): void;
 
   /**
    * Rebuild the territory and resource overlays from the map's metadata
@@ -215,11 +290,22 @@ export interface SceneApi {
   reload(): void;
   replaceMap(newMap: HexMap): void;
   setPathPreview(path: HexCoord[] | null, erasing?: boolean): void;
+  /**
+   * The edge of the hovered cell nearest the pointer — edge-precision picking
+   * for the road tool's single-edge mode. Resolved against the same hover the
+   * cell picker produced, so it returns null whenever no cell is hovered.
+   * Edge indices are in pointy-top EDGE_DIRS order.
+   */
+  pickEdge(clientX: number, clientY: number): { col: number; row: number; edge: number } | null;
   rebuildTerrainFromDescriptors(descriptors: TerrainDescriptor[], registry: TerrainAssetRegistry): Promise<void>;
   setLiquidDescriptors(descriptors: LiquidTypeDescriptor[]): void;
   loadAndApplyHexPack(source: File | Blob): Promise<{
     terrainDescriptors: TerrainDescriptor[];
     liquidDescriptors: LiquidTypeDescriptor[];
+    /** Faction roster carried by the pack — empty when it defines none. */
+    factions: FactionDescriptor[];
+    /** Resource types carried by the pack — empty when it defines none. */
+    resourceDescriptors: ResourceDescriptor[];
     maps: Map<string, HexMap>;
   }>;
 }
@@ -371,7 +457,10 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
   // nothing until something is actually painted — build them up front and let
   // the tools write through them.
   const territory = world.setFactions(DEFAULT_FACTIONS);
-  const resources = world.setResourceTypes(DEFAULT_RESOURCE_DESCRIPTORS);
+  // A deposit is a marker, not a prop — behind a tree or a ridge it dims to a
+  // ghost rather than vanishing, so it stays locatable without pretending the
+  // occluder isn't there. Weather still draws over.
+  const resources = world.setResourceTypes(DEFAULT_RESOURCE_DESCRIPTORS, undefined, { occluded: 'dimmed' });
 
   // Fog is off to start: an editor that opens onto a black map is useless.
   // The instance is built on demand and rebuilt whenever the map size changes.
@@ -400,26 +489,201 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     world.setDimExplored(dimExplored);
   }
 
+  // ---- Analysis overlays ----
+  let heatmapOn  = false;
+  let contoursOn = false;
+  // Contour lines are one overlay entry per threshold; the count varies with
+  // the map's range, so remember how many ids exist and hide the leftovers
+  // when the count shrinks (hiding is cheap, the entries are reused on re-show).
+  let contourIdCount = 0;
+
+  function refreshAnalysisOverlays(): void {
+    const map = world.map;
+    const ranges = (heatmapOn || contoursOn)
+      ? computeElevationRanges(map, t => world.isWater(t))
+      : null;
+
+    if (heatmapOn && ranges) {
+      const cells: Array<{ col: number; row: number }> = [];
+      for (let row = 0; row < map.height; row++) {
+        for (let col = 0; col < map.width; col++) cells.push({ col, row });
+      }
+      world.overlays.set('analysis-heatmap', cells, {
+        cellColor: ({ col, row }) => heatmapColor(
+          map.getElevation(col, row), ranges, world.isWater(map.getTerrain(col, row))),
+        opacity: 0.75,
+        // Cliff faces carry the tint too. NO depth test: terrain vertices are
+        // noise-perturbed (±0.8 XZ, ±0.2 Y) so a flat cap loses the depth test
+        // wherever a bump rises through it — tried, and it shredded the map.
+        walls: true,
+        // Under the hover fill (renderOrder 5) so the brush footprint and path
+        // previews stay readable on top of the tint.
+        renderOrder: 4,
+      });
+    } else {
+      world.overlays.set('analysis-heatmap', null);
+    }
+
+    const thresholds = contoursOn && ranges ? contourThresholds(ranges.all) : [];
+    for (let i = 0; i < Math.max(contourIdCount, thresholds.length); i++) {
+      if (i >= thresholds.length) {
+        world.overlays.set(`analysis-contour-${i}`, null);
+        continue;
+      }
+      const k = thresholds[i];
+      const atOrAbove: Array<{ col: number; row: number }> = [];
+      for (let row = 0; row < map.height; row++) {
+        for (let col = 0; col < map.width; col++) {
+          if (map.getElevation(col, row) >= k) atOrAbove.push({ col, row });
+        }
+      }
+      // Outline style draws only the set's boundary edges — which for the
+      // at-or-above set is exactly the contour at k. Widened into a ribbon:
+      // GL lines are one pixel everywhere, which vanished against the terrain.
+      world.overlays.set(`analysis-contour-${i}`, atOrAbove, {
+        style: 'outline', color: 0xffffff, opacity: 0.45, lineWidth: 0.1,
+      });
+    }
+    contourIdCount = thresholds.length;
+  }
+
   // Smoothed fps — an exponential moving average so the readout doesn't flicker
   let smoothedFps = 0;
 
   // Reused wind vector — the weather system copies it, so one instance is enough
   const wind = new THREE.Vector2();
 
-  // Hover footprint follows the brush every frame
+  // Hover footprint follows the brush every frame. While a selection is
+  // active and the active tool is confined by it, cells the mask excludes
+  // show dimmed with a red cast — you see before clicking where nothing will
+  // happen, right at the cursor instead of only in the status strip.
+  const BLOCKED_CELL_TINT = 0x7a2e26;
   world.onFrame = (dt: number) => {
     api.hoveredCell = world.hoveredCell;
-    world.overlays.set('hover', world.hoveredCell
+    const hoverCells = world.hoveredCell
       ? hexRange(offsetToHex(world.hoveredCell.col, world.hoveredCell.row), api.brushRadius).map(hexToOffset)
-      : null);
+      : null;
+    if (hoverCells && api.hoverMaskFeedback && selection.size > 0) {
+      world.overlays.set('hover', hoverCells, {
+        cellColor: c => selection.allows(c.col, c.row) ? null : BLOCKED_CELL_TINT,
+      });
+    } else {
+      world.overlays.set('hover', hoverCells);
+    }
     if (dt > 0) smoothedFps = smoothedFps === 0 ? 1 / dt : smoothedFps * 0.9 + (1 / dt) * 0.1;
+    // March the selection ants: the dash phase repeats every 2 dash lengths.
+    if (antsMesh.visible) {
+      antsMaterial.uniforms['uTime'].value = (antsMaterial.uniforms['uTime'].value + dt * 1.5) % 2;
+    }
   };
+
+  // Selection mask highlight: a soft fill on the shared overlay layer, plus a
+  // marching-ants boundary. The ants are a custom ribbon mesh rather than an
+  // overlay outline because those are static — here the dash pattern crawls
+  // along each boundary edge via a time uniform, the classic "this outline is
+  // live" cue, and the two-tone dashes stay readable over any terrain colour.
+  const antsMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime:   { value: 0 },
+      uDash:   { value: 0.3 }, // dash length in world units
+      uColorA: { value: new THREE.Color(0xf2faff) },
+      uColorB: { value: new THREE.Color(0x0d2036) },
+    },
+    vertexShader: /* glsl */ `
+      attribute float aDist;
+      varying float vDist;
+      void main() {
+        vDist = aDist;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uTime;
+      uniform float uDash;
+      uniform vec3 uColorA;
+      uniform vec3 uColorB;
+      varying float vDist;
+      void main() {
+        float phase = mod(vDist / uDash + uTime, 2.0);
+        gl_FragColor = vec4(phase < 1.0 ? uColorA : uColorB, 1.0);
+      }
+    `,
+    depthTest: false,
+    depthWrite: false,
+    // Render in the transparent pass so depthTest:false layers over the terrain.
+    transparent: true,
+    // The ribbon quads wind clockwise seen from above (hex corners run
+    // clockwise), which is the back face to three's default culling.
+    side: THREE.DoubleSide,
+  });
+  const antsGeometry = new THREE.BufferGeometry();
+  const antsMesh = new THREE.Mesh(antsGeometry, antsMaterial);
+  antsMesh.frustumCulled = false;
+  antsMesh.renderOrder = 7; // above the overlay outlines (6)
+  antsMesh.visible = false;
+  world.scene.add(antsMesh);
+
+  const ANTS_HALF_WIDTH = 0.05;
+  const ANTS_Y_OFFSET   = 0.04;
+
+  function rebuildSelectionHighlight(): void {
+    const cells = selection.cells();
+    // Fill under the hover overlay (renderOrder 5) so the brush footprint reads on top.
+    world.overlays.set('selection', cells.length > 0 ? cells : null,
+      { color: 0x3399ff, opacity: 0.22, renderOrder: 4 });
+    if (cells.length === 0) {
+      antsMesh.visible = false;
+      return;
+    }
+    const map      = world.map;
+    const edgeDirs = world.layout.orientation.edgeDirections;
+    const inSet    = new Set(cells.map(c => c.row * map.width + c.col));
+    const surfaceY = (col: number, row: number): number =>
+      (world.isWater(map.getTerrain(col, row)) ? map.getWaterSurface(col, row) : map.getElevation(col, row))
+        * ELEVATION_SCALE + ANTS_Y_OFFSET;
+    const verts: number[] = [];
+    const dists: number[] = [];
+    for (const { col, row } of cells) {
+      const hex = offsetToHex(col, row);
+      const y   = surfaceY(col, row);
+      const cs  = hexCorners(world.layout, hex);
+      for (let i = 0; i < 6; i++) {
+        const nb = hexToOffset(hexNeighbor(hex, edgeDirs[i]));
+        const inside = nb.col >= 0 && nb.col < map.width && nb.row >= 0 && nb.row < map.height
+          && inSet.has(nb.row * map.width + nb.col);
+        if (inside) continue;
+        // Boundary edge corner i → i+1 as a flat ribbon quad, carrying the
+        // distance along the edge so the dash pattern can march along it.
+        const c1 = cs[i], c2 = cs[(i + 1) % 6];
+        const len = Math.hypot(c2.x - c1.x, c2.z - c1.z);
+        const px  = -((c2.z - c1.z) / len) * ANTS_HALF_WIDTH;
+        const pz  =  ((c2.x - c1.x) / len) * ANTS_HALF_WIDTH;
+        verts.push(
+          c1.x - px, y, c1.z - pz,  c2.x - px, y, c2.z - pz,  c2.x + px, y, c2.z + pz,
+          c1.x - px, y, c1.z - pz,  c2.x + px, y, c2.z + pz,  c1.x + px, y, c1.z + pz,
+        );
+        dists.push(0, len, len, 0, len, 0);
+      }
+    }
+    antsGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+    antsGeometry.setAttribute('aDist',    new THREE.BufferAttribute(new Float32Array(dists), 1));
+    antsMesh.visible = true;
+  }
+
+  const selection = new SelectionModel(rebuildSelectionHighlight);
+
+  // pickEdge scratch — one ray, plane, and point reused across pointer moves.
+  const pickRaycaster = new THREE.Raycaster();
+  const pickPlane     = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const pickPoint     = new THREE.Vector3();
+  const pickNdc       = new THREE.Vector2();
 
   const api: SceneApi = {
     get map() { return world.map; },
     get chunks() { return world.chunks; },
     hoveredCell: null,
     brushRadius: 0,
+    hoverMaskFeedback: true,
     reload() {
       world.chunks.dispose();
       world.skirt?.rebuild();
@@ -431,8 +695,22 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
       // ensureFog rebuilds when the dimensions no longer match.
       fog = null;
       applyFogState();
+      // A selection is meaningless on a map it wasn't made on.
+      selection.clear();
       // setMap already refreshes territory/resources from the new metadata.
+      refreshAnalysisOverlays();
     },
+
+    // --- Analysis overlays ---
+    setElevationHeatmap(visible: boolean): void {
+      heatmapOn = visible;
+      refreshAnalysisOverlays();
+    },
+    setContourLines(visible: boolean): void {
+      contoursOn = visible;
+      refreshAnalysisOverlays();
+    },
+    refreshAnalysisOverlays,
 
     // --- Fog of war ---
     get fog(): FogData | null { return fogEnabled ? fog : null; },
@@ -474,6 +752,20 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
         explored: fog?.exploredCount ?? 0,
         total:    world.map.width * world.map.height,
       };
+    },
+    fogExploredBase64(): string | null {
+      // The internal instance, not the public getter — exploration painted
+      // before fog was toggled off must still reach the save file.
+      if (!fog) return null;
+      const f = fog;
+      const w = world.map.width;
+      return encodeBits(w * world.map.height, i => f.isExplored(i % w, (i / w) | 0));
+    },
+    setFogExplored(b64: string): void {
+      const f = ensureFog();
+      f.reset();
+      const w = world.map.width;
+      decodeBits(b64, w * world.map.height, i => f.markExplored(i % w, (i / w) | 0));
     },
 
     // --- Camera ---
@@ -539,6 +831,14 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     get seasonPhase(): number { return world.seasons?.phase ?? 0.5; },
     get seasonLabel(): string { return formatSeason(world.seasons?.phase ?? 0.5); },
 
+    // --- Selection ---
+    selection,
+    setSelectionPreview(cells: Array<{ col: number; row: number }> | null, subtract = false): void {
+      world.overlays.set('selection-preview', cells && cells.length > 0 ? cells : null,
+        { color: subtract ? 0xff5544 : 0xffffff, opacity: 0.3 });
+    },
+    refreshSelectionHighlight: rebuildSelectionHighlight,
+
     // --- Territory ---
     get territory(): TerritoryLayer | null { return world.territory; },
     get factions(): FactionDescriptor[] { return territory.factions; },
@@ -549,6 +849,11 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     get resources(): ResourceLayer | null { return world.resources; },
     get resourceDescriptors(): ResourceDescriptor[] { return resources.descriptors; },
     setResourcesVisible(visible: boolean): void { resources.setVisible(visible); },
+    setResourceDescriptors(descriptors: ResourceDescriptor[]): void {
+      world.setResourceTypes(descriptors);
+    },
+
+    setScatterVisible(visible: boolean): void { world.chunks.setScatterVisible(visible); },
 
     refreshGameplayLayers(): void {
       territory.refresh();
@@ -563,6 +868,35 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
       const color = erasing ? 0xff4444 : 0xffaa22;
       world.overlays.set('pathStart', [hexToOffset(path[0])], { color, opacity: 0.55, yOffset: 0.03 });
       world.overlays.setPath('pathPreview', path.length >= 2 ? path : null, { color });
+    },
+    pickEdge(clientX: number, clientY: number): { col: number; row: number; edge: number } | null {
+      const cell = api.hoveredCell;
+      if (!cell) return null;
+      const map = world.map;
+      // Ray → the hovered cell's own surface plane. The cell is already
+      // resolved by the full picking chain; only the bearing WITHIN it is
+      // needed, so a flat plane at its height is exact enough even by cliffs.
+      const rect = world.renderer.domElement.getBoundingClientRect();
+      pickNdc.set(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      pickRaycaster.setFromCamera(pickNdc, world.camera);
+      const surface = (world.isWater(map.getTerrain(cell.col, cell.row))
+        ? map.getWaterSurface(cell.col, cell.row)
+        : map.getElevation(cell.col, cell.row)) * ELEVATION_SCALE;
+      pickPlane.constant = -surface;
+      if (!pickRaycaster.ray.intersectPlane(pickPlane, pickPoint)) return null;
+      // Corner i→i+1 is the edge shared with edgeDirections[i] — the same
+      // correspondence the selection ants build on. Nearest midpoint wins.
+      const corners = hexCorners(world.layout, offsetToHex(cell.col, cell.row));
+      let edge = 0, bestD = Infinity;
+      for (let i = 0; i < 6; i++) {
+        const cA = corners[i], cB = corners[(i + 1) % 6];
+        const d = Math.hypot((cA.x + cB.x) / 2 - pickPoint.x, (cA.z + cB.z) / 2 - pickPoint.z);
+        if (d < bestD) { bestD = d; edge = i; }
+      }
+      return { col: cell.col, row: cell.row, edge };
     },
     isWater(terrain: number): boolean {
       return world.isWater(terrain);
@@ -634,6 +968,9 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     },
     async rebuildTerrainFromDescriptors(descriptors: TerrainDescriptor[], registry: TerrainAssetRegistry): Promise<void> {
       await world.setTerrainDescriptors(descriptors, registry);
+      // A palette swap can change which terrains count as water, which decides
+      // each cell's heatmap ramp.
+      refreshAnalysisOverlays();
     },
     setLiquidDescriptors(descriptors: LiquidTypeDescriptor[]): void {
       world.setLiquidDescriptors(descriptors);
@@ -641,6 +978,8 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     async loadAndApplyHexPack(source: File | Blob): Promise<{
       terrainDescriptors: TerrainDescriptor[];
       liquidDescriptors: LiquidTypeDescriptor[];
+      factions: FactionDescriptor[];
+      resourceDescriptors: ResourceDescriptor[];
       maps: Map<string, HexMap>;
     }> {
       const pkg = await loadHexPack(source, {
@@ -649,7 +988,14 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
       const oldMat = world.applyTerrainDefinitions(pkg.terrainDefinitions, pkg.terrainMaterial);
       if (oldMat !== pkg.terrainMaterial) oldMat.dispose();
       world.setLiquidDescriptors(pkg.liquidDescriptors, pkg.liquidMaterials);
-      return { terrainDescriptors: pkg.terrainDescriptors, liquidDescriptors: pkg.liquidDescriptors, maps: pkg.maps };
+      refreshAnalysisOverlays(); // the pack redefines the water terrain set
+      return {
+        terrainDescriptors:  pkg.terrainDescriptors,
+        liquidDescriptors:   pkg.liquidDescriptors,
+        factions:            pkg.factions,
+        resourceDescriptors: pkg.resourceDescriptors,
+        maps:                pkg.maps,
+      };
     },
   };
 

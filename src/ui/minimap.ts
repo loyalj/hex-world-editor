@@ -3,7 +3,7 @@ import {
   drawMapImage, getMapImageTransform, getMapWorldBounds,
   type MapImageTransform,
 } from '@loyalj/hex-world';
-import type { SceneApi } from './scene.js';
+import type { SceneApi } from '../scene.js';
 
 /**
  * Longest edge of the rendered image, in pixels. The panel displays it at

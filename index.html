@@ -55,6 +55,7 @@
             <button class="menu-item" id="load-btn">Open…<span class="menu-key">Ctrl+O</span></button>
             <input type="file" id="load-input" accept=".hxmp,.json" style="display:none" />
             <button class="menu-item" id="save-btn">Save<span class="menu-key">Ctrl+S</span></button>
+            <button class="menu-item" id="save-as-btn">Save as…<span class="menu-key">Ctrl+Shift+S</span></button>
             <div class="menu-divider"></div>
             <button class="menu-item" id="open-pack-btn">Open pack…</button>
             <input type="file" id="open-pack-input" accept=".hexpack" style="display:none" />
@@ -68,20 +69,33 @@
             <button class="menu-item" id="undo-btn" disabled>Undo<span class="menu-key">Ctrl+Z</span></button>
             <button class="menu-item" id="redo-btn" disabled>Redo<span class="menu-key">Ctrl+Y</span></button>
             <div class="menu-divider"></div>
-            <button class="menu-item" id="add-terrain-menu-btn">Add terrain type…</button>
+            <button class="menu-item" id="add-terrain-menu-btn">Terrain types…</button>
             <button class="menu-item" id="liquid-menu-btn">Liquid types…</button>
+            <button class="menu-item" id="factions-menu-btn">Factions…</button>
+            <button class="menu-item" id="resources-menu-btn">Resource types…</button>
           </div>
         </div>
 
         <div class="menu-dropdown">
           <button class="menu-btn" id="view-menu-btn">View</button>
           <div class="menu-panel hidden" id="view-menu-panel">
-            <button class="menu-item" id="toggle-grid-btn">Hex grid <span id="grid-check" class="menu-check hidden">&#10003;</span></button>
-            <button class="menu-item" id="toggle-shadows-btn">Shadows <span id="shadows-check" class="menu-check">&#10003;</span></button>
-            <button class="menu-item" id="toggle-sky-btn">Sky &amp; haze <span id="sky-check" class="menu-check">&#10003;</span></button>
-            <button class="menu-item" id="toggle-godrays-btn">God rays <span id="godrays-check" class="menu-check">&#10003;</span></button>
-            <button class="menu-item" id="toggle-skirt-btn">Map skirt <span id="skirt-check" class="menu-check">&#10003;</span></button>
-            <div class="menu-divider"></div>
+            <div class="menu-submenu">
+              <button class="menu-item" id="map-analysis-btn">Map analysis <span class="menu-arrow">&#8250;</span></button>
+              <div class="submenu-panel">
+                <button class="menu-item" id="toggle-grid-btn">Hex grid <span id="grid-check" class="menu-check hidden">&#10003;</span></button>
+                <button class="menu-item" id="toggle-heatmap-btn">Elevation heatmap <span id="heatmap-check" class="menu-check hidden">&#10003;</span></button>
+                <button class="menu-item" id="toggle-contours-btn">Contour lines <span id="contours-check" class="menu-check hidden">&#10003;</span></button>
+              </div>
+            </div>
+            <div class="menu-submenu">
+              <button class="menu-item" id="render-effects-btn">Render effects <span class="menu-arrow">&#8250;</span></button>
+              <div class="submenu-panel">
+                <button class="menu-item" id="toggle-shadows-btn">Shadows <span id="shadows-check" class="menu-check">&#10003;</span></button>
+                <button class="menu-item" id="toggle-sky-btn">Sky &amp; haze <span id="sky-check" class="menu-check">&#10003;</span></button>
+                <button class="menu-item" id="toggle-godrays-btn">God rays <span id="godrays-check" class="menu-check">&#10003;</span></button>
+                <button class="menu-item" id="toggle-skirt-btn">Map skirt <span id="skirt-check" class="menu-check">&#10003;</span></button>
+              </div>
+            </div>
             <div class="menu-submenu">
               <button class="menu-item" id="camera-mode-btn">Camera <span class="menu-arrow">&#8250;</span></button>
               <div class="submenu-panel">
@@ -89,9 +103,14 @@
                 <button class="menu-item" id="camera-free-btn">Free <span id="camera-free-check" class="menu-check">&#10003;</span></button>
               </div>
             </div>
-            <div class="menu-divider"></div>
-            <button class="menu-item" id="toggle-territory-btn">Territory borders <span id="territory-check" class="menu-check">&#10003;</span></button>
-            <button class="menu-item" id="toggle-resources-btn">Resource icons <span id="resources-check" class="menu-check">&#10003;</span></button>
+            <div class="menu-submenu">
+              <button class="menu-item" id="map-layers-btn">Map layers <span class="menu-arrow">&#8250;</span></button>
+              <div class="submenu-panel">
+                <button class="menu-item" id="toggle-territory-btn">Territory borders <span id="territory-check" class="menu-check">&#10003;</span></button>
+                <button class="menu-item" id="toggle-resources-btn">Resource icons <span id="resources-check" class="menu-check">&#10003;</span></button>
+                <button class="menu-item" id="toggle-scatter-btn">Scatter features <span id="scatter-check" class="menu-check">&#10003;</span></button>
+              </div>
+            </div>
             <div class="menu-divider"></div>
             <button class="menu-item" id="toggle-drawer-menu-btn">Tool drawer <span id="drawer-check" class="menu-check">&#10003;</span></button>
           </div>
@@ -102,7 +121,10 @@
       <div id="main">
 
         <div id="tool-rail">
-          <button class="tool-btn rail-btn active" data-tool="paint-terrain" title="Terrain (1)">
+          <button class="tool-btn rail-btn active" data-tool="select" title="Selection (0)">
+            <svg viewBox="0 0 24 24"><path d="M4 4h4M10 4h4M16 4h4M4 4v4M4 10v4M4 16v4M20 4v4M20 10v4M20 16v4M4 20h4M10 20h4M16 20h4"></path></svg>
+          </button>
+          <button class="tool-btn rail-btn" data-tool="paint-terrain" title="Terrain (1)">
             <svg viewBox="0 0 24 24"><path d="M21 16.5V7.5L12 3 3 7.5v9L12 21z"></path><path d="M3 7.5 12 12l9-4.5M12 12v9"></path></svg>
           </button>
           <button class="tool-btn rail-btn" data-tool="elevation" title="Elevation (2)">
@@ -137,11 +159,71 @@
 
         <aside id="left-panel">
           <div id="drawer-head">
-            <div id="drawer-title">Terrain</div>
+            <div id="drawer-title">Selection</div>
           </div>
 
           <div id="drawer-body">
-            <div id="terrain-options" class="tool-panel">
+            <div id="selection-options" class="tool-panel">
+              <div class="group-header">Mode</div>
+              <div class="brush-group" id="selection-mode-group">
+                <button class="brush-btn active" data-select-mode="pointer" title="Pointer — click a cell to select it">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M5.5 4.5 L18.5 10 L12.7 12.7 L10 18.5 Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <button class="brush-btn" data-select-mode="wand" title="Magic wand — select the connected region matching the clicked cell">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <line x1="13.8" y1="10.2" x2="4.5" y2="19.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    <path d="M16.5 3.5 V6 M16.5 9 V11.5 M12.5 7.5 H15 M18 7.5 H20.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                </button>
+                <button class="brush-btn" data-select-mode="rect" title="Rectangle — drag a rectangle of cells">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <rect x="4.5" y="6" width="15" height="12" rx="1" stroke="currentColor" stroke-width="1.8" stroke-dasharray="3 2.4"/>
+                  </svg>
+                </button>
+                <button class="brush-btn" data-select-mode="lasso" title="Lasso — drag an outline; the cells inside are selected">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M12 4.5 C6.5 4.5 4 7.3 4 10.5 C4 13.7 7.5 16 12 16 C16.5 16 20 13.7 20 10.5 C20 7.3 17.5 4.5 12 4.5 Z" stroke="currentColor" stroke-width="1.8" stroke-dasharray="3 2.4"/>
+                    <path d="M8.2 15.4 C6.9 16.7 7.8 18.6 6.2 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                </button>
+              </div>
+              <div id="pointer-brush-section">
+                <div class="group-header">Brush</div>
+                <div class="brush-group" id="selection-brush-group">
+                  <button class="brush-btn active" data-brush="0" title="1 cell"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"  fill="currentColor"/></svg></button>
+                  <button class="brush-btn"        data-brush="1" title="7 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"  fill="currentColor"/></svg></button>
+                  <button class="brush-btn"        data-brush="2" title="19 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"  fill="currentColor"/></svg></button>
+                  <button class="brush-btn"        data-brush="3" title="37 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="currentColor"/></svg></button>
+                </div>
+              </div>
+              <div id="wand-match-section" class="hidden">
+                <div class="group-header">Wand matches</div>
+                <div class="segmented" id="wand-match-group">
+                  <button class="scatter-type-btn active" data-wand-match="terrain" title="Cells sharing the clicked cell's terrain">Terrain</button>
+                  <button class="scatter-type-btn" data-wand-match="elevation" title="Cells near the clicked cell's elevation">Elevation</button>
+                </div>
+                <label class="toggle-row">
+                  <span class="tip-host" data-tip="On selects only the connected region; off selects every matching cell on the map.">Contiguous</span>
+                  <input type="checkbox" id="wand-contiguous" checked />
+                </label>
+                <div id="wand-tolerance-row" class="field hidden">
+                  <span>Tolerance &plusmn;</span>
+                  <input type="number" id="wand-tolerance" value="0" min="0" max="127" autocomplete="off" />
+                </div>
+              </div>
+              <div class="group-header" id="selection-actions-header" data-tip="Shift+click adds, Alt+click or right-click removes, Shift+Alt+click keeps only the overlap, Esc clears.">Selection</div>
+              <div class="option-list">
+                <button id="selection-all-btn" title="Select every cell (Ctrl+A)">Select all</button>
+                <button id="selection-invert-btn" title="Swap selected and unselected cells (Ctrl+I)">Invert</button>
+                <button id="selection-grow-btn" title="Expand the selection by one ring of neighbours">Grow</button>
+                <button id="selection-shrink-btn" title="Remove the selection's boundary cells">Shrink</button>
+                <button id="selection-clear-btn" title="Deselect everything (Esc)">Clear selection</button>
+              </div>
+            </div>
+
+            <div id="terrain-options" class="tool-panel hidden">
               <div id="terrain-type-group">
                 <!-- populated by renderTerrainPalette() in main.ts -->
               </div>
@@ -256,17 +338,48 @@
 
             <div id="river-options" class="tool-panel hidden">
               <div class="group-header" id="river-mode-header" data-tip="Hold and drag to place. Shift to erase. Esc cancels.">Mode</div>
-              <div class="option-list" id="river-mode-group">
-                <button class="density-btn active" data-river-mode="path">Path</button>
-                <button class="density-btn" data-river-mode="straight">Straight</button>
-                <button class="density-btn" data-river-mode="waypoint">Waypoints</button>
-                <button class="density-btn" data-river-mode="downhill">Downhill trace</button>
-                <button class="density-btn" data-river-mode="erase">Erase</button>
+              <div class="brush-group" id="river-mode-group">
+                <button class="brush-btn active" data-river-mode="path" title="Pathfinding">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M4,19 C4,11 20,13 20,5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    <circle cx="4"  cy="19" r="2.5" fill="currentColor"/>
+                    <circle cx="20" cy="5"  r="2.5" fill="currentColor"/>
+                  </svg>
+                </button>
+                <button class="brush-btn" data-river-mode="straight" title="Straight line">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <line x1="4" y1="19" x2="20" y2="5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    <circle cx="4"  cy="19" r="2.5" fill="currentColor"/>
+                    <circle cx="20" cy="5"  r="2.5" fill="currentColor"/>
+                  </svg>
+                </button>
+                <button class="brush-btn" data-river-mode="waypoint" title="Waypoints">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M4,19 L12,12 L13,6.5 L20,5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="4"  cy="19" r="2.5" fill="currentColor"/>
+                    <circle cx="12" cy="12" r="2.5" fill="currentColor"/>
+                    <circle cx="20" cy="5"  r="2.5" fill="currentColor"/>
+                  </svg>
+                </button>
+                <button class="brush-btn" data-river-mode="downhill" title="Downhill trace">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <circle cx="6" cy="4.5" r="2.5" fill="currentColor"/>
+                    <path d="M6 4.5 C6 11 14 9 14 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    <path d="M11.6 12.8 L14 15.4 L16.4 12.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M4 20.5 q2 -1.6 4 0 t4 0 t4 0 t4 0" stroke="currentColor" stroke-width="1.6"/>
+                  </svg>
+                </button>
+                <button class="brush-btn" data-river-mode="erase" title="Erase">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M13.5 4.5 L19.5 10.5 L10.5 19.5 L4.5 13.5 Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                    <line x1="7.5" y1="10.5" x2="13.5" y2="16.5" stroke="currentColor" stroke-width="2"/>
+                  </svg>
+                </button>
               </div>
             </div>
 
             <div id="road-options" class="tool-panel hidden">
-              <div class="group-header" data-tip="Click start → click end to place. Esc cancels.">Mode</div>
+              <div class="group-header" id="road-mode-header" data-tip="Hold and drag to place. Shift to erase. Esc cancels.">Mode</div>
               <div class="brush-group" id="road-mode-group">
                 <button class="brush-btn active" data-road-mode="path" title="Pathfinding">
                   <svg viewBox="0 0 24 24" fill="none">
@@ -282,8 +395,32 @@
                     <circle cx="20" cy="5"  r="2.5" fill="currentColor"/>
                   </svg>
                 </button>
+                <button class="brush-btn" data-road-mode="waypoint" title="Waypoints">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M4,19 L12,12 L13,6.5 L20,5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="4"  cy="19" r="2.5" fill="currentColor"/>
+                    <circle cx="12" cy="12" r="2.5" fill="currentColor"/>
+                    <circle cx="20" cy="5"  r="2.5" fill="currentColor"/>
+                  </svg>
+                </button>
+                <button class="brush-btn" data-road-mode="edge" title="Single edge">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M12 3 L19.8 7.5 V16.5 L12 21 L4.2 16.5 V7.5 Z" stroke="currentColor" stroke-width="1.3" opacity="0.45"/>
+                    <path d="M19.8 7.5 V16.5" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                  </svg>
+                </button>
+                <button class="brush-btn" data-road-mode="erase" title="Erase">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M13.5 4.5 L19.5 10.5 L10.5 19.5 L4.5 13.5 Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                    <line x1="7.5" y1="10.5" x2="13.5" y2="16.5" stroke="currentColor" stroke-width="2"/>
+                  </svg>
+                </button>
               </div>
-              <div id="road-cost-options" class="hidden">
+              <label class="toggle-row" id="road-snap-row">
+                <span data-tip="Start a new road at a nearby road end (within 2 cells) instead of leaving a gap.">Snap to road ends</span>
+                <input type="checkbox" id="road-snap" checked />
+              </label>
+              <div id="road-cost-options">
                 <div class="group-header">Costs</div>
                 <label class="toggle-row">
                   <span>Elevation</span>
@@ -478,7 +615,7 @@
             <div id="status-pos">—</div>
             <div id="status-elev">—</div>
             <div class="status-right">
-              <div class="status-hint">1–6 tools</div>
+              <div class="status-hint">0–9 tools</div>
               <div id="status-zoom">1.0×</div>
               <div id="status-fps">— fps</div>
             </div>
@@ -524,35 +661,8 @@
       </div>
     </div>
 
-    <dialog id="new-map-dialog">
-      <div class="dialog-header">
-        <span class="dialog-title">New Map</span>
-        <button class="dialog-close" id="dialog-close-btn">&#x2715;</button>
-      </div>
-      <div class="dialog-body">
-        <label class="field">
-          <span>Width</span>
-          <input id="map-width-input" type="number" min="10" value="100" autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>Height</span>
-          <input id="map-height-input" type="number" min="10" value="100" autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>Generator</span>
-          <select id="generator-select"></select>
-        </label>
-        <label class="field">
-          <span>Seed</span>
-          <div class="seed-row">
-            <input id="seed-input" type="number" min="0" max="4294967295" />
-            <button id="new-seed-btn" title="Random seed">&#9861;</button>
-          </div>
-        </label>
-        <div id="config-fields"></div>
-        <button id="create-map-btn">Create Map</button>
-      </div>
-    </dialog>
+    <!-- New-map wizard — content is built by src/wizard.ts from the shape/climate registries. -->
+    <dialog id="wizard-dialog"></dialog>
 
     <dialog id="add-terrain-dialog">
       <div class="dialog-header">
@@ -652,6 +762,125 @@
           </div>
         </label>
         <button id="liquid-apply-btn">Apply</button>
+      </div>
+    </dialog>
+
+    <dialog id="faction-dialog">
+      <div class="dialog-header">
+        <span class="dialog-title">Factions</span>
+        <button class="dialog-close" id="faction-close-btn">&#x2715;</button>
+      </div>
+      <div class="dialog-body">
+        <label class="field">
+          <span>Faction</span>
+          <select id="faction-select"></select>
+        </label>
+        <label class="field">
+          <span>Name</span>
+          <input id="faction-name" type="text" placeholder="e.g. Kelmar" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Color</span>
+          <div class="color-row">
+            <input id="faction-color" type="color" value="#dd4433" />
+            <span id="faction-color-label" class="color-hex-label">#dd4433</span>
+          </div>
+        </label>
+        <div class="field">
+          <span>Border color <span class="field-hint">(off = same as fill)</span></span>
+          <div class="color-row">
+            <input id="faction-border-custom" type="checkbox" autocomplete="off" />
+            <input id="faction-border" type="color" value="#dd4433" />
+            <span id="faction-border-label" class="color-hex-label">&#8212;</span>
+          </div>
+        </div>
+        <div class="dialog-btn-row">
+          <button id="faction-apply-btn">Apply</button>
+          <button id="faction-delete-btn" class="danger-btn">Delete&#8230;</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="resource-dialog">
+      <div class="dialog-header">
+        <span class="dialog-title">Resource Types</span>
+        <button class="dialog-close" id="resource-close-btn">&#x2715;</button>
+      </div>
+      <div class="dialog-body">
+        <label class="field">
+          <span>Resource</span>
+          <select id="resource-select"></select>
+        </label>
+        <label class="field">
+          <span>Name</span>
+          <input id="resource-name" type="text" placeholder="e.g. Copper" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Color</span>
+          <div class="color-row">
+            <input id="resource-color" type="color" value="#b0b6c0" />
+            <span id="resource-color-label" class="color-hex-label">#b0b6c0</span>
+          </div>
+        </label>
+        <label class="field">
+          <span>Yields <span class="field-hint">(e.g. food: 2, gold: 1)</span></span>
+          <input id="resource-yields" type="text" placeholder="&#8212; none &#8212;" autocomplete="off" />
+        </label>
+
+        <div class="group-header" data-tip="Where the brush (with rules on) allows this resource. Leave everything unset to allow it anywhere.">Placement rules</div>
+        <div class="field">
+          <span>Allowed terrain <span class="field-hint">(none active = all)</span></span>
+          <div id="resource-terrains" class="terrain-filter-group"></div>
+        </div>
+        <div class="field">
+          <span>Elevation <span class="field-hint">(blank = unlimited)</span></span>
+          <div class="elev-range-row">
+            <label class="elev-range-label">Min<input type="number" id="resource-elev-min" min="-128" max="127" autocomplete="off" /></label>
+            <label class="elev-range-label">Max<input type="number" id="resource-elev-max" min="-128" max="127" autocomplete="off" /></label>
+          </div>
+        </div>
+        <label class="toggle-row">
+          <span>On open water</span>
+          <input type="checkbox" id="resource-req-liquid" autocomplete="off" />
+        </label>
+        <label class="toggle-row">
+          <span>Coastal land only</span>
+          <input type="checkbox" id="resource-req-coast" autocomplete="off" />
+        </label>
+        <label class="toggle-row">
+          <span>On a river</span>
+          <input type="checkbox" id="resource-req-river" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Needs scatter <span class="field-hint">(at least this density)</span></span>
+          <div class="color-row">
+            <select id="resource-feature-layer">
+              <option value="">&#8212; none &#8212;</option>
+              <option value="0">Pines</option>
+              <option value="1">Rocks</option>
+              <option value="2">Broadleaf</option>
+              <option value="3">Bushes</option>
+            </select>
+            <select id="resource-feature-level">
+              <option value="1">Sparse</option>
+              <option value="2">Medium</option>
+              <option value="3">Dense</option>
+            </select>
+          </div>
+        </label>
+        <label class="field">
+          <span>Generator frequency <span class="field-hint">(0&#8211;1 chance per eligible cell)</span></span>
+          <input id="resource-frequency" type="number" min="0" max="1" step="0.01" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Generator spacing <span class="field-hint">(min hexes between deposits)</span></span>
+          <input id="resource-spacing" type="number" min="0" max="30" step="1" autocomplete="off" />
+        </label>
+
+        <div class="dialog-btn-row">
+          <button id="resource-apply-btn">Apply</button>
+          <button id="resource-delete-btn" class="danger-btn">Delete&#8230;</button>
+        </div>
       </div>
     </dialog>
 

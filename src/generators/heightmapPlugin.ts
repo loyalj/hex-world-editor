@@ -1,6 +1,6 @@
 import { DEFAULT_WATER_TERRAIN_INDEX } from '@loyalj/hex-world';
 import type { HexMap } from '@loyalj/hex-world';
-import type { ConfigFieldEx } from './configUI.ts';
+import type { ConfigFieldEx } from '../wizard/configUI.ts';
 
 export interface HeightmapImageData {
   pixels: Uint8ClampedArray;
