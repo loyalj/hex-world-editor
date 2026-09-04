@@ -257,6 +257,26 @@ describe('selection persistence', () => {
   });
 });
 
+describe('lock persistence', () => {
+  it('round-trips locked terrains through save and restore', async () => {
+    s.locks.setIndices([7, 2]);
+    const { written } = await saveVia('locked.hexmap.json');
+    const editor = (JSON.parse(written()) as { editor: { lockedTerrains?: number[] } }).editor;
+    expect(editor.lockedTerrains).toEqual([2, 7]);
+
+    s.locks.setIndices([]);
+    (loadSession as Mock).mockResolvedValueOnce({ name: 'locked', json: written(), savedAt: Date.now() });
+    await p.restoreSession();
+    expect(s.locks.indices()).toEqual([2, 7]);
+  });
+
+  it('omits the block when nothing is locked', async () => {
+    const { written } = await saveVia('unlocked.hexmap.json');
+    const editor = (JSON.parse(written()) as { editor: { lockedTerrains?: number[] } }).editor;
+    expect(editor.lockedTerrains).toBeUndefined();
+  });
+});
+
 describe('session restore', () => {
   it('restores the stored session silently and marks it unsaved', async () => {
     dirty();

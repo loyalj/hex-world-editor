@@ -202,8 +202,8 @@ export class ElevationTool extends BrushTool {
       for (let i = 0; i <= n; i++) {
         const off = hexToOffset(this.currentPath[i]);
         if (off.col < 0 || off.col >= scene.map.width || off.row < 0 || off.row >= scene.map.height) continue;
-        // The ramp is computed over the whole line; the mask only gates writes.
-        if (!scene.selection.allows(off.col, off.row)) continue;
+        // The ramp is computed over the whole line; mask/locks only gate writes.
+        if (!scene.editable(off.col, off.row)) continue;
         const prev = scene.map.getElevation(off.col, off.row);
         const next = Math.max(this.rangeMin, Math.min(this.rangeMax,
           Math.round(startElev + (endElev - startElev) * (i / n))));
@@ -258,7 +258,7 @@ export class ElevationTool extends BrushTool {
     for (const { col, row } of cells) {
       // The slump simulates across the whole footprint (reads are unmasked);
       // only the resulting writes honour the selection.
-      if (!this.ctx.scene.selection.allows(col, row)) continue;
+      if (!this.ctx.scene.editable(col, row)) continue;
       const p = prevMap.get(this.cellKey(col, row))!;
       const n = working.get(this.cellKey(col, row))!;
       if (p === n) continue;

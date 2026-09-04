@@ -23,6 +23,8 @@ export class FogTool extends BrushTool {
   readonly id: ToolId = 'paint-fog';
   readonly title = 'Fog of war';
   readonly panel = document.getElementById('fog-options') as HTMLElement;
+  /** Exploration is per-player state, not map content — locks don't apply. */
+  readonly ignoresLocks = true;
 
   private mode: FogMode = 'reveal';
   private radius = 1;
@@ -105,6 +107,10 @@ export class FogTool extends BrushTool {
   }
 
   override brushRadius(): number { return this.radius; }
+
+  protected override cellEditable(col: number, row: number): boolean {
+    return this.ctx.scene.selection.allows(col, row);
+  }
 
   protected applyCell(col: number, row: number): void {
     // No-op rather than painting into a detached fog: with the layer off

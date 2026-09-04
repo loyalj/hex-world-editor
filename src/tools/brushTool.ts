@@ -26,7 +26,8 @@ export abstract class BrushTool implements Tool {
    * under the overlays; flushed once per stamp rather than once per cell.
    */
   protected gameplayDirty = false;
-  private down = false;
+  /** Mid-stroke flag — subclasses with hover previews check it to stay quiet while painting. */
+  protected down = false;
 
   constructor(ctx: ToolContext) {
     this.ctx = ctx;
@@ -57,13 +58,21 @@ export abstract class BrushTool implements Tool {
     this.stamp(cell);
   }
 
-  /** Apply the brush footprint centred on a cell, masked by the selection. */
+  /**
+   * The per-cell write gate: selection mask plus terrain locks. Tools whose
+   * edits aren't map content (fog) override this to drop the lock check.
+   */
+  protected cellEditable(col: number, row: number): boolean {
+    return this.ctx.scene.editable(col, row);
+  }
+
+  /** Apply the brush footprint centred on a cell, masked by {@link cellEditable}. */
   protected stamp(cell: CellPos): void {
-    const { map, selection } = this.ctx.scene;
+    const { map } = this.ctx.scene;
     for (const hex of hexRange(offsetToHex(cell.col, cell.row), this.brushRadius())) {
       const off = hexToOffset(hex);
       if (off.col < 0 || off.col >= map.width || off.row < 0 || off.row >= map.height) continue;
-      if (!selection.allows(off.col, off.row)) continue;
+      if (!this.cellEditable(off.col, off.row)) continue;
       const key = this.cellKey(off.col, off.row);
       if (this.visited.has(key)) continue;
       this.visited.add(key);

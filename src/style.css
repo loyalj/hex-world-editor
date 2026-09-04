@@ -317,7 +317,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--gutter);
-  overflow: hidden;
+  /* More cards than viewport (minimap + inspector + locks) scroll rather
+     than clip; the cards themselves stay their natural height. */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .panel {
@@ -331,8 +334,10 @@ body {
 }
 
 #inspector-panel {
-  flex: 1;
-  min-height: 0;
+  /* Fill the column's leftover space, but never shrink below the natural
+     height of the readout rows — on short viewports the column scrolls
+     (overflow-y on #right-panel) instead of crushing this card. */
+  flex: 1 0 auto;
 }
 
 .panel-head {
@@ -466,6 +471,23 @@ body {
 #status-zoom { color: var(--fg); font-variant-numeric: tabular-nums; }
 #status-fps  { font-variant-numeric: tabular-nums; }
 
+/* Terrain-locks chip — visible exactly while locks are active, so hidden
+   panels never mean silently blocked edits. Click opens the Locks panel. */
+#status-locks-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 9px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  color: var(--fg);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#status-locks-chip:hover { background: var(--accent-soft); color: var(--accent-fg); }
+
 .status-hint { white-space: nowrap; }
 
 /* ============================================================
@@ -475,25 +497,8 @@ body {
 #terrain-type-group {
   display: flex;
   flex-direction: column;
-  gap: 22px;
-}
-
-.pal-section {
-  display: flex;
-  flex-direction: column;
   gap: 10px;
-}
-
-.pal-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.pal-head-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--fg-muted);
+  margin-top: 10px; /* air between the Solid/Liquid tabs and the swatches */
 }
 
 /* ---- Hover tooltip ---- */
@@ -600,21 +605,19 @@ body {
   pointer-events: none;
 }
 
-.swatch-lock {
+/* Lock state glyph on the Locks-panel rows — always visible, dim until locked. */
+.lock-glyph {
   position: absolute;
   top: 3px;
   right: 4px;
   font-size: 9px;
   line-height: 1;
-  opacity: 0;
+  opacity: 0.35;
   transition: opacity 0.12s;
-  cursor: pointer;
   user-select: none;
 }
 
-.swatch-row:hover .swatch-lock { opacity: 0.45; }
-
-.swatch-row--locked .swatch-lock { opacity: 1; }
+.swatch-row--locked .lock-glyph  { opacity: 1; }
 .swatch-row--locked .swatch-name { color: var(--fg-subtle); }
 .swatch-row--locked .swatch-chip { opacity: 0.45; }
 
@@ -700,7 +703,7 @@ body {
   flex: 1;
   padding: 8px 0;
   border: none;
-  border-radius: 11px;
+  border-radius: calc(var(--r-menu) - 3px); /* nests inside the track's radius */
   background: transparent;
   color: var(--fg-muted);
   font: inherit;
@@ -1160,6 +1163,121 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
   flex-direction: column;
   gap: 14px;
 }
+
+/* ============================================================
+   Settings dialog — theme presets and tuning
+   ============================================================ */
+
+#settings-dialog { width: 400px; }
+
+#settings-dialog .group-header:first-child { margin-top: 4px; }
+#settings-dialog .group-header { margin-top: 10px; margin-bottom: 0; }
+
+.theme-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.theme-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.theme-preset:hover  { background: var(--surface-3); }
+.theme-preset.active { border-color: var(--accent); color: var(--fg); }
+
+.theme-preset-dots { display: flex; gap: 4px; }
+.theme-preset-dots span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.4);
+}
+
+/* Live accent swatch riding the "Accent" group header. */
+.theme-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* Label · slider · value on one line. */
+.settings-row {
+  display: grid;
+  grid-template-columns: 76px 1fr 40px;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--fg-2);
+}
+
+.settings-row input[type="range"] {
+  min-width: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-row .slider-value { width: auto; }
+
+/* Hue sliders paint the wheel on their own track, so they restyle fully. */
+.hue-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 10px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(to right,
+    oklch(70% 0.14 0), oklch(70% 0.14 45), oklch(70% 0.14 90),
+    oklch(70% 0.14 135), oklch(70% 0.14 180), oklch(70% 0.14 225),
+    oklch(70% 0.14 270), oklch(70% 0.14 315), oklch(70% 0.14 360));
+}
+
+.hue-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+.hue-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+#theme-reset-btn {
+  padding: 11px 14px;
+  border: none;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-top: 6px;
+}
+
+#theme-reset-btn:hover { background: var(--surface-3); color: var(--fg); }
 
 /* ============================================================
    New-map wizard

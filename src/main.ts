@@ -8,9 +8,11 @@ import { Minimap } from './ui/minimap.ts';
 import { initWizard } from './wizard/wizard.ts';
 import { hydrateInfoTips } from './ui/infoTips.ts';
 import { initPalette, EDITOR_DEFAULT_TERRAINS } from './ui/palette.ts';
+import { initLocksPanel } from './ui/locksPanel.ts';
 import { initRosters } from './ui/rosters.ts';
 import { initPersistence } from './ui/persistence.ts';
 import { initMenus } from './ui/menus.ts';
+import { initSettings } from './ui/settings.ts';
 import { initReadouts } from './ui/readouts.ts';
 import { initToolManager } from './tools/toolManager.ts';
 import type { ToolContext } from './tools/tool.ts';
@@ -23,10 +25,15 @@ import { EnvironmentTool } from './tools/environmentTool.ts';
 import { TerritoryTool } from './tools/territoryTool.ts';
 import { ResourceTool } from './tools/resourceTool.ts';
 import { FogTool } from './tools/fogTool.ts';
+import { UnitTool } from './tools/unitTool.ts';
 import { SelectionTool } from './tools/selectionTool.ts';
 
 // ---- Generator registry ----
 const PLUGINS = [FbmPlugin, ChunkPlugin, HeightmapPlugin];
+
+// The stored theme goes on before the scene load so the chrome never flashes
+// the stylesheet defaults; the dialog wiring rides along.
+initSettings();
 
 // ---- Scene, history, minimap ----
 const viewport = document.getElementById('viewport') as HTMLDivElement;
@@ -93,6 +100,7 @@ const environmentTool = new EnvironmentTool(ctx);
 const territoryTool   = new TerritoryTool(ctx);
 const resourceTool    = new ResourceTool(ctx);
 const fogTool         = new FogTool(ctx);
+const unitTool        = new UnitTool(ctx);
 const selectionTool   = new SelectionTool(ctx);
 
 const drawerTitle = document.getElementById('drawer-title') as HTMLElement;
@@ -101,21 +109,40 @@ const toolManager = initToolManager(
   // First entry is the tool active on load — the selection pointer, so a
   // fresh launch starts in a mode that can't accidentally repaint the map.
   [selectionTool, terrainTool, elevationTool, riverTool, roadTool, scatterTool,
-   environmentTool, territoryTool, resourceTool, fogTool],
+   environmentTool, territoryTool, resourceTool, fogTool, unitTool],
   viewport,
   tool => { drawerTitle.textContent = tool.title; },
 );
 
 // ---- UI modules ----
+// Stubs bound after their modules exist — the palette renders once during its
+// own init, and the menus (which own panel visibility) come later still.
+let refreshLocksUi = (): void => {};
+let showLocksPanel = (): void => {};
+
 const palette = initPalette({
   scene, terrainTool, scatterTool,
   minimapInvalidate: () => minimap.invalidate(),
+  onTerrainsChanged: () => refreshLocksUi(),
 });
+
+const locksPanel = initLocksPanel({
+  scene,
+  terrains: () => palette.terrains,
+  showPanel: () => showLocksPanel(),
+});
+refreshLocksUi = () => locksPanel.refresh();
+// Locks are saved-file state outside the undo history, like fog exploration —
+// a change marks the document unsaved and schedules the autosave.
+scene.locks.onChange = () => {
+  locksPanel.refresh();
+  ctx.noteSettingsChanged();
+};
 
 // Faction and resource-type rosters: the Edit-menu dialogs, and what a save
 // file or pack records for them.
 const rosters = initRosters({
-  ctx, territoryTool, resourceTool,
+  ctx, territoryTool, resourceTool, unitTool,
   terrains: () => palette.terrains,
 });
 hydrateInfoTips();
@@ -145,7 +172,8 @@ document.getElementById('add-terrain-confirm-btn')!
 document.getElementById('liquid-apply-btn')!
   .addEventListener('click', () => persistence.noteSettingsChanged());
 
-initMenus({ scene, minimapInvalidate: () => minimap.invalidate() });
+const menus = initMenus({ scene, minimapInvalidate: () => minimap.invalidate() });
+showLocksPanel = () => menus.setPanelVisible('locks', true);
 
 initReadouts({ scene, minimap, tools: toolManager, terrainTool, environmentTool, terrains: () => palette.terrains });
 

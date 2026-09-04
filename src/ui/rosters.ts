@@ -7,11 +7,13 @@ import { clearMetadataKey } from '../tools/tool.ts';
 import type { ToolContext } from '../tools/tool.ts';
 import type { TerritoryTool } from '../tools/territoryTool.ts';
 import type { ResourceTool } from '../tools/resourceTool.ts';
+import type { UnitTool } from '../tools/unitTool.ts';
 
 export interface RostersOptions {
   ctx: ToolContext;
   territoryTool: TerritoryTool;
   resourceTool: ResourceTool;
+  unitTool: UnitTool;
   /** Live terrain palette, for the allowed-terrain chips in the resource dialog. */
   terrains(): TerrainDescriptor[];
 }
@@ -75,7 +77,7 @@ export function formatYields(yields: Record<string, number> | undefined): string
 }
 
 export function initRosters(opts: RostersOptions): RostersApi {
-  const { ctx, territoryTool, resourceTool } = opts;
+  const { ctx, territoryTool, resourceTool, unitTool } = opts;
   const { scene } = ctx;
 
   // ---- State ----
@@ -88,6 +90,9 @@ export function initRosters(opts: RostersOptions): RostersApi {
   function pushFactions(): void {
     scene.setFactions(factions);
     territoryTool.refreshPalette();
+    unitTool.refreshPalette();
+    // Unit markers are tinted by faction, so a roster edit recolours them.
+    scene.refreshGameplayLayers();
     // Faction tints ride into the minimap through the territory layer.
     ctx.minimapInvalidate();
   }

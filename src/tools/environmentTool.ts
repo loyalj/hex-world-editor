@@ -43,6 +43,7 @@ export class EnvironmentTool implements Tool {
   readonly panel = document.getElementById('environment-options') as HTMLElement;
   /** Edits global settings, not cells — the selection mask never applies. */
   readonly ignoresSelectionMask = true;
+  readonly ignoresLocks = true;
 
   private readonly ctx: ToolContext;
   private weatherKind: WeatherType = 'clear';

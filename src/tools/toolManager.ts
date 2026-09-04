@@ -11,6 +11,7 @@ const TOOL_HOTKEYS: Record<string, ToolId> = {
   '7': 'paint-territory',
   '8': 'paint-resource',
   '9': 'paint-fog',
+  'u': 'paint-unit',
 };
 
 export interface ToolManager {
@@ -50,6 +51,7 @@ export function initToolManager(
     toolButtons.forEach(b => b.classList.toggle('active', b.dataset['tool'] === id));
     for (const t of tools) t.panel.classList.toggle('hidden', t !== active);
     ctx.scene.hoverMaskFeedback = !(active.ignoresSelectionMask ?? false);
+    ctx.scene.hoverLockFeedback = !(active.ignoresLocks ?? false);
     ctx.syncBrushRadius();
     ctx.updateCursor();
     onToolChange(active);

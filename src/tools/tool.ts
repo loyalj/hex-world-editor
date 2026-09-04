@@ -4,7 +4,7 @@ import type { SceneApi } from '../scene.ts';
 export type ToolId =
   | 'select'
   | 'paint-terrain' | 'elevation' | 'paint-river' | 'paint-road' | 'paint-scatter'
-  | 'environment' | 'paint-territory' | 'paint-resource' | 'paint-fog';
+  | 'environment' | 'paint-territory' | 'paint-resource' | 'paint-fog' | 'paint-unit';
 
 export interface CellPos { col: number; row: number }
 
@@ -50,6 +50,12 @@ export interface Tool {
    * out-of-mask feedback on the hover footprint while a selection is active.
    */
   readonly ignoresSelectionMask?: boolean;
+  /**
+   * True for tools the terrain locks don't apply to — those editing per-player
+   * or view state rather than map content (fog), and those that edit no cells
+   * at all. Suppresses the locked-cell tint on the hover footprint.
+   */
+  readonly ignoresLocks?: boolean;
 
   /** Hover-footprint radius (0 = single cell). */
   brushRadius(): number;
@@ -77,20 +83,20 @@ export const brushCells = (r: number): number => 3 * r * r + 3 * r + 1;
  * Wipe one metadata key across the whole map as one undoable edit. Ownership
  * and resources both live in the metadata channel, so the transaction has to
  * touch every cell it clears for the snapshot to be able to put it back.
- * Honours the selection mask: with a selection active, "all" means all
- * selected cells.
+ * Honours the selection mask and the terrain locks: with a selection active,
+ * "all" means all selected cells, and protected cells keep their data.
  */
 export function clearMetadataKey(
   ctx: ToolContext,
   key: string,
   matches: (col: number, row: number) => boolean,
 ): void {
-  const { map, selection } = ctx.scene;
+  const { map } = ctx.scene;
   const tx = map.beginEdit();
   let count = 0;
   for (let row = 0; row < map.height; row++) {
     for (let col = 0; col < map.width; col++) {
-      if (!matches(col, row) || !selection.allows(col, row)) continue;
+      if (!matches(col, row) || !ctx.scene.editable(col, row)) continue;
       tx.setCellData(col, row, key, undefined);
       count++;
     }

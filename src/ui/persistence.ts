@@ -75,6 +75,8 @@ interface EditorSaveState {
   terrainImages?: Record<string, string>;
   /** Selection-mask bitmask, base64, row-major. Absent when nothing was selected. */
   selection?: string;
+  /** Locked terrain indices. Absent when nothing was locked. */
+  lockedTerrains?: number[];
 }
 
 /** Debounce after the last edit before the session is autosaved. */
@@ -208,6 +210,7 @@ export function initPersistence(opts: PersistenceOptions): PersistenceApi {
       editor.selection = encodeBits(width * height,
         i => scene.selection.has(i % width, Math.floor(i / width)));
     }
+    if (scene.locks.size > 0) editor.lockedTerrains = scene.locks.indices();
     payload['editor'] = editor;
     return JSON.stringify(payload);
   }
@@ -243,6 +246,8 @@ export function initPersistence(opts: PersistenceOptions): PersistenceApi {
           i => cells.push({ col: i % width, row: Math.floor(i / width) }));
         scene.selection.setCells(cells);
       }
+      // After replaceMap, which reset the locks along with the selection.
+      if (editor?.lockedTerrains?.length) scene.locks.setIndices(editor.lockedTerrains);
     } catch (err) {
       console.warn('Save file editor state not fully restored:', err);
     }

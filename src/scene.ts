@@ -3,7 +3,7 @@ import {
   HexMap, HexWorld, ChunkManager, FogData,
   loadHexPack, formatSeason, cameraGroundFootprint,
   DEFAULT_RESOURCE_DESCRIPTORS,
-  offsetToHex, hexToOffset, hexRange, hexCorners, hexNeighbor, ELEVATION_SCALE,
+  offsetToHex, hexToOffset, hexToWorld, hexRange, hexCorners, hexNeighbor, ELEVATION_SCALE,
   attachSeasonalTint, attachWindSway, attachScatterTexture, styleScatterTexture,
   createRockMaterial,
   createPineGeometry, createBroadleafGeometry, createBushGeometry,
@@ -16,6 +16,8 @@ import type {
 } from '@loyalj/hex-world';
 import { computeElevationRanges, heatmapColor, contourThresholds } from './analysis.ts';
 import { SelectionModel } from './selection.ts';
+import { LockModel } from './locks.ts';
+import { UNIT_TYPES, unitAt } from './unitTypes.ts';
 
 /** How much freedom the camera has. See {@link EditorScene.setCameraMode}. */
 export type CameraMode = 'rts' | 'free';
@@ -102,6 +104,11 @@ export interface SceneApi {
    * false for tools the mask doesn't confine.
    */
   hoverMaskFeedback: boolean;
+  /**
+   * Same, for cells the terrain locks protect. False for tools locks don't
+   * apply to (fog, selection, environment).
+   */
+  hoverLockFeedback: boolean;
   isWater(terrain: number): boolean;
   terrainLookup: Map<number, TerrainDefinition>;
   /** Show or hide the shader hex grid overlay (survives terrain material swaps). */
@@ -234,6 +241,19 @@ export interface SceneApi {
    */
   readonly selection: SelectionModel;
   /**
+   * Terrain locks — indices whose cells no editing tool may modify. Saved
+   * with the document (unlike the selection); cleared on map replace, then
+   * restored from the file's editor block by the load path.
+   */
+  readonly locks: LockModel;
+  /**
+   * The single write gate: whether editing tools may modify this cell right
+   * now, combining the selection mask and the terrain locks. Every tool that
+   * edits map content checks this instead of `selection.allows` — the
+   * exceptions (fog exploration, the selection itself) keep their own rules.
+   */
+  editable(col: number, row: number): boolean;
+  /**
    * In-progress marquee/lasso footprint, drawn over the committed selection.
    * Subtract gestures render in the removal tint. Pass null to hide.
    */
@@ -261,6 +281,9 @@ export interface SceneApi {
 
   /** Show or hide all scatter features (trees, rocks, bushes); the layers underneath keep their data. */
   setScatterVisible(visible: boolean): void;
+
+  /** Show or hide the unit markers; the metadata underneath keeps its data. */
+  setUnitsVisible(visible: boolean): void;
 
   /**
    * Rebuild the territory and resource overlays from the map's metadata
@@ -553,19 +576,25 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
   // Reused wind vector — the weather system copies it, so one instance is enough
   const wind = new THREE.Vector2();
 
-  // Hover footprint follows the brush every frame. While a selection is
-  // active and the active tool is confined by it, cells the mask excludes
-  // show dimmed with a red cast — you see before clicking where nothing will
-  // happen, right at the cursor instead of only in the status strip.
+  // Hover footprint follows the brush every frame. While a selection or any
+  // terrain lock is active and the active tool is confined by them, cells
+  // they exclude show dimmed with a red cast — you see before clicking where
+  // nothing will happen, right at the cursor instead of only in the status
+  // strip.
   const BLOCKED_CELL_TINT = 0x7a2e26;
   world.onFrame = (dt: number) => {
     api.hoveredCell = world.hoveredCell;
     const hoverCells = world.hoveredCell
       ? hexRange(offsetToHex(world.hoveredCell.col, world.hoveredCell.row), api.brushRadius).map(hexToOffset)
       : null;
-    if (hoverCells && api.hoverMaskFeedback && selection.size > 0) {
+    const maskFeedback = api.hoverMaskFeedback && selection.size > 0;
+    const lockFeedback = api.hoverLockFeedback && locks.size > 0;
+    if (hoverCells && (maskFeedback || lockFeedback)) {
       world.overlays.set('hover', hoverCells, {
-        cellColor: c => selection.allows(c.col, c.row) ? null : BLOCKED_CELL_TINT,
+        cellColor: c =>
+          (maskFeedback && !selection.allows(c.col, c.row)) ||
+          (lockFeedback && world.map.inBounds(c.col, c.row) && locks.isLocked(world.map.getTerrain(c.col, c.row)))
+            ? BLOCKED_CELL_TINT : null,
       });
     } else {
       world.overlays.set('hover', hoverCells);
@@ -671,6 +700,58 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
   }
 
   const selection = new SelectionModel(rebuildSelectionHighlight);
+  const locks = new LockModel();
+
+  // ---- Unit markers ----
+  // Placed units are cell metadata (see unitTypes.ts); this layer is their
+  // rendering: one low-poly marker per occupied cell, silhouette by unit type,
+  // colour by owning faction. Rebuilt wholesale on every gameplay refresh —
+  // unit counts are tiny next to the map, and wholesale is what keeps undo,
+  // load, and elevation edits under a marker all trivially correct.
+  const unitGroup = new THREE.Group();
+  world.scene.add(unitGroup);
+
+  // Geometry origins sit at the marker's base so position.y is the surface.
+  const unitGeometries = new Map<string, THREE.BufferGeometry>([
+    ['infantry', new THREE.CylinderGeometry(0.16, 0.21, 0.55, 10).translate(0, 0.275, 0)],
+    ['cavalry',  new THREE.ConeGeometry(0.25, 0.65, 10).translate(0, 0.325, 0)],
+    ['archer',   new THREE.OctahedronGeometry(0.24).translate(0, 0.28, 0)],
+    ['ship',     new THREE.BoxGeometry(0.62, 0.22, 0.32).translate(0, 0.11, 0)],
+  ]);
+  const unitFallbackGeometry = unitGeometries.get(UNIT_TYPES[0].id)!;
+  const unitMaterials = new Map<number, THREE.MeshLambertMaterial>();
+  const unitMaterialFor = (color: number): THREE.MeshLambertMaterial => {
+    let mat = unitMaterials.get(color);
+    if (!mat) {
+      mat = new THREE.MeshLambertMaterial({ color });
+      unitMaterials.set(color, mat);
+    }
+    return mat;
+  };
+
+  function rebuildUnitLayer(): void {
+    unitGroup.clear();
+    const map = world.map;
+    const factionColor = new Map(territory.factions.map(f => [f.id, f.color]));
+    for (let row = 0; row < map.height; row++) {
+      for (let col = 0; col < map.width; col++) {
+        if (!map.hasCellData(col, row)) continue;
+        const unit = unitAt(map, col, row);
+        if (!unit) continue;
+        const mesh = new THREE.Mesh(
+          unitGeometries.get(unit.type) ?? unitFallbackGeometry,
+          unitMaterialFor(factionColor.get(unit.faction) ?? 0x9aa0a6),
+        );
+        const p = hexToWorld(world.layout, offsetToHex(col, row));
+        const terrain = map.getTerrain(col, row);
+        const surface = (world.isWater(terrain)
+          ? map.getWaterSurface(col, row)
+          : map.getElevation(col, row)) * ELEVATION_SCALE;
+        mesh.position.set(p.x, surface + 0.03, p.z);
+        unitGroup.add(mesh);
+      }
+    }
+  }
 
   // pickEdge scratch — one ray, plane, and point reused across pointer moves.
   const pickRaycaster = new THREE.Raycaster();
@@ -684,6 +765,7 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     hoveredCell: null,
     brushRadius: 0,
     hoverMaskFeedback: true,
+    hoverLockFeedback: true,
     reload() {
       world.chunks.dispose();
       world.skirt?.rebuild();
@@ -695,9 +777,13 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
       // ensureFog rebuilds when the dimensions no longer match.
       fog = null;
       applyFogState();
-      // A selection is meaningless on a map it wasn't made on.
+      // A selection is meaningless on a map it wasn't made on. Locks reset
+      // too — a loaded file's own locks are re-applied by the load path.
       selection.clear();
-      // setMap already refreshes territory/resources from the new metadata.
+      locks.unlockAll();
+      // setMap already refreshes territory/resources from the new metadata;
+      // the unit layer is the editor's own, so it rebuilds here.
+      rebuildUnitLayer();
       refreshAnalysisOverlays();
     },
 
@@ -833,6 +919,10 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
 
     // --- Selection ---
     selection,
+    locks,
+    editable(col: number, row: number): boolean {
+      return selection.allows(col, row) && !locks.isLocked(world.map.getTerrain(col, row));
+    },
     setSelectionPreview(cells: Array<{ col: number; row: number }> | null, subtract = false): void {
       world.overlays.set('selection-preview', cells && cells.length > 0 ? cells : null,
         { color: subtract ? 0xff5544 : 0xffffff, opacity: 0.3 });
@@ -855,9 +945,12 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
 
     setScatterVisible(visible: boolean): void { world.chunks.setScatterVisible(visible); },
 
+    setUnitsVisible(visible: boolean): void { unitGroup.visible = visible; },
+
     refreshGameplayLayers(): void {
       territory.refresh();
       resources.refresh();
+      rebuildUnitLayer();
     },
     setPathPreview(path: HexCoord[] | null, erasing = false): void {
       if (!path || path.length === 0) {

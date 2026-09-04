@@ -1,6 +1,6 @@
 import { DEFAULT_TERRAIN_DESCRIPTORS, DEFAULT_LIQUID_DESCRIPTORS } from '@loyalj/hex-world';
 import type { TerrainDescriptor, TerrainAssetRegistry, LiquidTypeDescriptor } from '@loyalj/hex-world';
-import { buildInfoTip } from './infoTips.ts';
+import { wireOptionGroup } from './uiHelpers.ts';
 import type { SceneApi } from '../scene.ts';
 import type { TerrainTool } from '../tools/terrainTool.ts';
 import type { ScatterTool } from '../tools/scatterTool.ts';
@@ -24,6 +24,8 @@ export interface PaletteOptions {
   terrainTool: TerrainTool;
   scatterTool: ScatterTool;
   minimapInvalidate(): void;
+  /** The terrain roster changed (add/edit/load) — dependent UI re-renders. */
+  onTerrainsChanged?(): void;
 }
 
 /**
@@ -107,6 +109,39 @@ export function initPalette(opts: PaletteOptions): PaletteApi {
   const DEFAULT_TERRAIN_IDS = new Set(DEFAULT_TERRAIN_DESCRIPTORS.map(d => d.id));
 
   // ---- Terrain palette ----
+  type TerrainCategory = 'solid' | 'liquid';
+  /** Which tab of the palette is showing. */
+  let activeCategory: TerrainCategory = 'solid';
+
+  const categoryOf = (index: number): TerrainCategory =>
+    terrainDescriptors.find(d => d.index === index)?.liquidType ? 'liquid' : 'solid';
+
+  const categoryBtns = wireOptionGroup('#terrain-category-group .scatter-type-btn', btn => {
+    activeCategory = btn.dataset['terrainCat'] as TerrainCategory;
+    renderSwatchGrid();
+  });
+
+  /** Switch tabs programmatically — an eyedrop can land on the other one. */
+  function setCategory(cat: TerrainCategory): void {
+    activeCategory = cat;
+    categoryBtns.forEach(b => b.classList.toggle('active', b.dataset['terrainCat'] === cat));
+    renderSwatchGrid();
+  }
+
+  /**
+   * The one way the paint selection moves: sets the tool's paint index and
+   * sweeps the active swatch, switching to its tab first when the pick lives
+   * on the other one. Swatch clicks and the tool's eyedropper both land here,
+   * so the highlight can never drift from the tool state.
+   */
+  function selectTerrain(index: number): void {
+    terrainTool.paintTerrain = index;
+    if (categoryOf(index) !== activeCategory) setCategory(categoryOf(index));
+    document.querySelectorAll<HTMLElement>('#terrain-type-group .swatch-row')
+      .forEach(b => b.classList.toggle('active', b.dataset['terrain'] === String(index)));
+  }
+  terrainTool.onTerrainSampled = selectTerrain;
+
   function openTerrainDialog(editIndex: number | null, presetLiquid?: string): void {
     editingTerrainIndex = editIndex;
     if (editIndex !== null) {
@@ -138,13 +173,12 @@ export function initPalette(opts: PaletteOptions): PaletteApi {
     addTerrainDialog.showModal();
   }
 
-  /** One swatch row: color chip, name, and a lock toggle that appears on hover. */
+  /** One swatch row: color chip and name. Locks live in the Locks panel now. */
   function buildSwatchRow(desc: TerrainDescriptor): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.className = 'swatch-row';
     btn.dataset['terrain'] = String(desc.index);
     if (desc.index === terrainTool.paintTerrain) btn.classList.add('active');
-    if (terrainTool.lockedTerrains.has(desc.index)) btn.classList.add('swatch-row--locked');
 
     const chip = document.createElement('span');
     chip.className = 'swatch-chip';
@@ -156,23 +190,9 @@ export function initPalette(opts: PaletteOptions): PaletteApi {
     name.textContent = desc.name;
     btn.appendChild(name);
 
-    const lockEl = document.createElement('span');
-    lockEl.className = 'swatch-lock';
-    lockEl.title = 'Lock/unlock — locked terrain cannot be painted over';
-    lockEl.textContent = '🔒';
-    lockEl.addEventListener('click', e => {
-      e.stopPropagation();
-      if (terrainTool.lockedTerrains.has(desc.index)) {
-        terrainTool.lockedTerrains.delete(desc.index);
-        btn.classList.remove('swatch-row--locked');
-      } else {
-        terrainTool.lockedTerrains.add(desc.index);
-        btn.classList.add('swatch-row--locked');
-      }
-    });
-    btn.appendChild(lockEl);
-
-    if (!DEFAULT_TERRAIN_IDS.has(desc.id)) {
+    // Only custom solid terrains edit from here — the palette is for picking
+    // what to paint; liquid look and behaviour live in the Liquid Types dialog.
+    if (!DEFAULT_TERRAIN_IDS.has(desc.id) && !desc.liquidType) {
       btn.classList.add('swatch-row--custom');
       btn.title = `${desc.name} (right-click to edit)`;
       btn.addEventListener('contextmenu', e => { e.preventDefault(); openTerrainDialog(desc.index); });
@@ -180,56 +200,27 @@ export function initPalette(opts: PaletteOptions): PaletteApi {
       btn.title = desc.name;
     }
 
-    btn.addEventListener('click', () => {
-      terrainTool.paintTerrain = desc.index;
-      document.querySelectorAll('#terrain-type-group .swatch-row')
-        .forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    });
+    btn.addEventListener('click', () => selectTerrain(desc.index));
     return btn;
   }
 
-  /** A labelled palette section: header row and swatch grid. */
-  function buildPaletteSection(
-    label: string,
-    descriptors: TerrainDescriptor[],
-    sectionOpts: { tip?: string } = {},
-  ): HTMLElement {
-    const section = document.createElement('div');
-    section.className = 'pal-section';
-
-    const head = document.createElement('div');
-    head.className = 'pal-head';
-    const heading = document.createElement('div');
-    heading.className = 'pal-head-label';
-    heading.textContent = label;
-    head.appendChild(heading);
-    if (sectionOpts.tip) head.appendChild(buildInfoTip(sectionOpts.tip));
-    section.appendChild(head);
-
-    const grid = document.createElement('div');
-    grid.className = 'pal-grid';
-    for (const desc of descriptors) grid.appendChild(buildSwatchRow(desc));
-
-    section.appendChild(grid);
-    return section;
-  }
-
-  function renderTerrainPalette(): void {
+  /** Rebuild the visible tab's swatch grid. */
+  function renderSwatchGrid(): void {
     const group = document.getElementById('terrain-type-group')!;
     group.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'pal-grid';
+    for (const desc of terrainDescriptors) {
+      if (categoryOf(desc.index) === activeCategory) grid.appendChild(buildSwatchRow(desc));
+    }
+    group.appendChild(grid);
+  }
 
-    group.appendChild(buildPaletteSection(
-      'Solid',
-      terrainDescriptors.filter(d => !d.liquidType),
-      { tip: 'Alt+click samples the cell under the cursor. Click the lock on a swatch to keep it.' },
-    ));
-    group.appendChild(buildPaletteSection(
-      'Liquid',
-      terrainDescriptors.filter(d => d.liquidType),
-    ));
-
+  /** Full refresh after the descriptors themselves changed (add/edit/load). */
+  function renderTerrainPalette(): void {
+    renderSwatchGrid();
     scatterTool.refreshTerrainFilter(terrainDescriptors);
+    opts.onTerrainsChanged?.();
     // Terrain colors drive the minimap's fills, and a palette edit never touches
     // the undo stack — this is the only signal that they changed.
     opts.minimapInvalidate();

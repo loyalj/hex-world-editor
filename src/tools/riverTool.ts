@@ -289,15 +289,16 @@ export class RiverTool implements Tool {
 
   private applyRiverPath(path: HexCoord[], erasing: boolean): void {
     if (path.length < 2) return;
-    const { map, chunks, selection } = this.ctx.scene;
+    const scene = this.ctx.scene;
+    const { map, chunks } = scene;
     const tx = map.beginEdit();
     // River channels live on the edges between cells, so like roads a segment
-    // is masked unless both of its endpoint cells are selected. Consistency
-    // repairs on cells just outside (detaching a replaced downstream edge)
-    // still run — they're consequences of an allowed write, and leaving them
-    // out would strand half-edges.
+    // is gated unless both of its endpoint cells are editable (selection mask
+    // and terrain locks alike). Consistency repairs on cells just outside
+    // (detaching a replaced downstream edge) still run — they're consequences
+    // of an allowed write, and leaving them out would strand half-edges.
     const segmentAllowed = (a: CellPos, b: CellPos): boolean =>
-      selection.allows(a.col, a.row) && selection.allows(b.col, b.row);
+      scene.editable(a.col, a.row) && scene.editable(b.col, b.row);
 
     if (erasing) {
       // Partial detach: remove only the half-edges the drawn path follows, so
@@ -351,7 +352,7 @@ export class RiverTool implements Tool {
   }
 
   private eraseRiverAt(col: number, row: number): void {
-    if (!this.ctx.scene.selection.allows(col, row)) return;
+    if (!this.ctx.scene.editable(col, row)) return;
     const key = this.cellKey(col, row);
     if (this.eraseVisited.has(key)) return;
     this.eraseVisited.add(key);

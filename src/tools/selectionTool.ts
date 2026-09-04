@@ -7,14 +7,15 @@ import type { CellPos, Tool, ToolContext, ToolId } from './tool.ts';
 
 type SelectMode = 'pointer' | 'wand' | 'rect' | 'lasso';
 type WandMatch = 'terrain' | 'elevation';
+type MarqueeShape = 'rectangle' | 'circle' | 'hexagon' | 'triangle';
 
 /**
  * Builds the selection mask — and only that: this tool never edits the map.
  * Four sub-tools share the modifier convention (Shift adds, Alt subtracts,
  * plain click replaces): a pointer that clicks or drag-paints cells, a magic
  * wand matching the clicked cell's terrain or elevation (contiguous region or
- * map-wide, with an elevation tolerance), a drag-rectangle, and a freehand
- * lasso. Esc cancels a drag in progress, or clears the selection. The
+ * map-wide, with an elevation tolerance), a drag-marquee (rectangle, circle,
+ * hexagon, or triangle inscribed in the dragged box), and a freehand lasso. Esc cancels a drag in progress, or clears the selection. The
  * selection survives tool switches — it exists to constrain the other tools.
  */
 export class SelectionTool implements Tool {
@@ -23,11 +24,15 @@ export class SelectionTool implements Tool {
   readonly panel = document.getElementById('selection-options') as HTMLElement;
   /** Selecting is how the mask is *made* — its own clicks are never confined. */
   readonly ignoresSelectionMask = true;
+  /** Selecting locked cells is fine; only editing them is not. */
+  readonly ignoresLocks = true;
 
   private readonly ctx: ToolContext;
   private mode: SelectMode = 'pointer';
   /** Pointer-mode brush radius (0 = single cell) — other modes ignore it. */
   private pointerRadius = 0;
+  /** Rect-mode marquee shape, inscribed in the dragged box. */
+  private marqueeShape: MarqueeShape = 'rectangle';
   private wandMatch: WandMatch = 'terrain';
   /** Wand flood vs map-wide scan. */
   private contiguous = true;
@@ -59,9 +64,11 @@ export class SelectionTool implements Tool {
     const wandSection    = document.getElementById('wand-match-section') as HTMLElement;
     const toleranceRow   = document.getElementById('wand-tolerance-row') as HTMLElement;
     const pointerSection = document.getElementById('pointer-brush-section') as HTMLElement;
+    const shapeSection   = document.getElementById('rect-shape-section') as HTMLElement;
     wireOptionGroup('#selection-mode-group .brush-btn', btn => {
       this.mode = btn.dataset['selectMode'] as SelectMode;
       pointerSection.classList.toggle('hidden', this.mode !== 'pointer');
+      shapeSection.classList.toggle('hidden', this.mode !== 'rect');
       wandSection.classList.toggle('hidden', this.mode !== 'wand');
       this.refreshWandPreview();
       ctx.syncBrushRadius();
@@ -70,6 +77,9 @@ export class SelectionTool implements Tool {
     wireBrushGroup('selection-brush-group', radius => {
       this.pointerRadius = radius;
       ctx.syncBrushRadius();
+    });
+    wireOptionGroup('#rect-shape-group .brush-btn', btn => {
+      this.marqueeShape = btn.dataset['marqueeShape'] as MarqueeShape;
     });
     wireOptionGroup('#wand-match-group .scatter-type-btn', btn => {
       this.wandMatch = btn.dataset['wandMatch'] as WandMatch;
@@ -162,7 +172,9 @@ export class SelectionTool implements Tool {
         this.ctx.scene.selection.apply(this.footprint(cell), this.dragOp);
       }
     } else if (this.mode === 'rect') {
-      this.dragEnd = cell;
+      // Ctrl is read live, not captured at pointer-down, so the 1:1 lock can
+      // be toggled mid-drag without disturbing the gesture's operation.
+      this.dragEnd = e.ctrlKey || e.metaKey ? this.squareEnd(cell) : cell;
       this.preview(this.rectCells());
     } else if (this.mode === 'lasso') {
       const last = this.lassoPath[this.lassoPath.length - 1];
@@ -294,18 +306,118 @@ export class SelectionTool implements Tool {
     return (col, row) => Math.abs(map.getElevation(col, row) - elev) <= tolerance;
   }
 
-  /** Every cell in the offset-space rectangle spanned by anchor and dragEnd. */
+  /**
+   * Ctrl's aspect lock: project the hovered cell so the box stays square
+   * around the anchor. The projected corner may overhang the map — the shape
+   * fills clip to it, so the selection just crops at the border.
+   */
+  private squareEnd(cell: CellPos): CellPos {
+    const a = this.anchor!;
+    const size = Math.max(Math.abs(cell.col - a.col), Math.abs(cell.row - a.row));
+    return {
+      col: a.col + size * (Math.sign(cell.col - a.col) || 1),
+      row: a.row + size * (Math.sign(cell.row - a.row) || 1),
+    };
+  }
+
+  /** The marquee shape's cells within the offset-space box spanned by anchor and dragEnd. */
   private rectCells(): CellPos[] {
     if (!this.anchor || !this.dragEnd) return [];
     const c0 = Math.min(this.anchor.col, this.dragEnd.col);
     const c1 = Math.max(this.anchor.col, this.dragEnd.col);
     const r0 = Math.min(this.anchor.row, this.dragEnd.row);
     const r1 = Math.max(this.anchor.row, this.dragEnd.row);
+    if (this.marqueeShape === 'triangle') return this.triangleCells(c0, c1, r0, r1);
+    if (this.marqueeShape === 'hexagon') return this.hexagonCells(c0, c1, r0, r1);
+    const inside = this.marqueeInside(c0, c1, r0, r1);
+    // Iteration clips to the map (a Ctrl-locked box may overhang it); the
+    // inside test keeps the full box, so the shape crops rather than squashes.
+    const { map } = this.ctx.scene;
     const cells: CellPos[] = [];
-    for (let row = r0; row <= r1; row++) {
-      for (let col = c0; col <= c1; col++) cells.push({ col, row });
+    const colEnd = Math.min(map.width - 1, c1);
+    const rowEnd = Math.min(map.height - 1, r1);
+    for (let row = Math.max(0, r0); row <= rowEnd; row++) {
+      for (let col = Math.max(0, c0); col <= colEnd; col++) {
+        if (inside(col, row)) cells.push({ col, row });
+      }
     }
     return cells;
+  }
+
+  /**
+   * Inside test for the circle marquee, an ellipse inscribed in the dragged
+   * box in plain col/row space — the same flat-grid reading the rectangle has
+   * always used. Half-spans are padded by half a cell so the ellipse covers
+   * cell areas rather than centres: a 2×2 circle selects its four cells
+   * instead of nothing. (Rectangle passes everything through.)
+   */
+  private marqueeInside(c0: number, c1: number, r0: number, r1: number): (col: number, row: number) => boolean {
+    if (this.marqueeShape === 'rectangle') return () => true;
+    const cx = (c0 + c1) / 2;
+    const cy = (r0 + r1) / 2;
+    const hx = (c1 - c0) / 2 + 0.5;
+    const hy = (r1 - r0) / 2 + 0.5;
+    return (col, row) => {
+      const u = (col - cx) / hx;
+      const v = (row - cy) / hy;
+      return u * u + v * v <= 1;
+    };
+  }
+
+  /**
+   * Triangle marquee: the apex points wherever the drag mostly went — the
+   * 45° diagonals through the anchor quarter the plane, and the quadrant
+   * holding the drag end picks north, south, east, or west (ties go
+   * vertical, the original behaviour). The base sits on the anchor's edge of
+   * the box, the apex centred on the far edge. The sides are hex lines from
+   * the apex to the base corners, so they rasterize exactly as evenly as a
+   * hand-drawn line would; an east/west base is the grid's straight
+   * constant-column run. A 1:1 dragged box yields the grid's natural
+   * equilateral triangle: rows shrinking by exactly one cell toward the apex.
+   */
+  private triangleCells(c0: number, c1: number, r0: number, r1: number): CellPos[] {
+    const dc = this.dragEnd!.col - this.anchor!.col;
+    const dr = this.dragEnd!.row - this.anchor!.row;
+    const spans = new Map<number, Span>();
+    if (Math.abs(dc) > Math.abs(dr)) {
+      const apex = { col: dc > 0 ? c1 : c0, row: Math.round((r0 + r1) / 2) };
+      const baseCol = dc > 0 ? c0 : c1;
+      widenLine(spans, apex, { col: baseCol, row: r0 });
+      widenLine(spans, apex, { col: baseCol, row: r1 });
+      // Every row reaches back to the base column, not just the slant rows.
+      for (let row = r0; row <= r1; row++) widenSpan(spans, baseCol, row);
+    } else {
+      const apex = { col: Math.round((c0 + c1) / 2), row: dr > 0 ? r1 : r0 };
+      const baseRow = dr > 0 ? r0 : r1;
+      widenLine(spans, apex, { col: c0, row: baseRow });
+      widenLine(spans, apex, { col: c1, row: baseRow });
+    }
+    return fillSpans(spans, r0, r1, this.ctx.scene.map);
+  }
+
+  /**
+   * Hexagon marquee, pointy-top like the grid: vertices at the box's top and
+   * bottom centres, sides running straight down the box edges through the
+   * middle half. Only the left boundary is drawn — hex lines for the slants,
+   * a constant-column run for the side (the grid's natural vertical, which a
+   * hex line would wobble around) — and each row's right edge mirrors it
+   * about the box centre, so the shape always comes out symmetric.
+   */
+  private hexagonCells(c0: number, c1: number, r0: number, r1: number): CellPos[] {
+    const cx = Math.round((c0 + c1) / 2);
+    const inset = Math.round((r1 - r0) / 4);
+    const rA = r0 + inset;
+    const rB = r1 - inset;
+    const left = new Map<number, Span>();
+    widenLine(left, { col: cx, row: r0 }, { col: c0, row: rA });
+    widenLine(left, { col: cx, row: r1 }, { col: c0, row: rB });
+    for (let row = rA; row <= rB; row++) widenSpan(left, c0, row);
+    const spans = new Map<number, Span>();
+    for (const [row, { lo }] of left) {
+      const hi = c0 + c1 - lo; // mirror; hi < lo when the apex sits right of centre
+      spans.set(row, { lo: Math.min(lo, hi), hi: Math.max(lo, hi) });
+    }
+    return fillSpans(spans, r0, r1, this.ctx.scene.map);
   }
 
   /** The outline cells plus every cell whose center falls inside the closed loop. */
@@ -335,8 +447,46 @@ export class SelectionTool implements Tool {
     const wand = this.mode === 'wand' && this.wandHoverCount > 0
       ? ` · wand would ${this.wandHoverSubtract ? 'remove' : 'select'} ${this.wandHoverCount}`
       : '';
-    return `${count}${wand} · Shift adds · Alt removes · Shift+Alt intersects`;
+    const lock = this.mode === 'rect' ? ' · Ctrl locks 1:1' : '';
+    return `${count}${wand} · Shift adds · Alt removes · Shift+Alt intersects${lock}`;
   }
+}
+
+/** One row's contiguous column range in a convex marquee outline. */
+type Span = { lo: number; hi: number };
+
+/** Stretch a row's span to include a column. */
+function widenSpan(spans: Map<number, Span>, col: number, row: number): void {
+  const span = spans.get(row);
+  if (!span) spans.set(row, { lo: col, hi: col });
+  else {
+    span.lo = Math.min(span.lo, col);
+    span.hi = Math.max(span.hi, col);
+  }
+}
+
+/** Walk the hex line between two cells, widening each row's span it crosses. */
+function widenLine(spans: Map<number, Span>, a: CellPos, b: CellPos): void {
+  for (const h of hexLineDraw(offsetToHex(a.col, a.row), offsetToHex(b.col, b.row))) {
+    const { col, row } = hexToOffset(h);
+    widenSpan(spans, col, row);
+  }
+}
+
+/** Convex row-span fill: every cell between each row's outline extremes, clipped to the map. */
+function fillSpans(
+  spans: Map<number, Span>, r0: number, r1: number,
+  map: { width: number; height: number },
+): CellPos[] {
+  const cells: CellPos[] = [];
+  const rowEnd = Math.min(map.height - 1, r1);
+  for (let row = Math.max(0, r0); row <= rowEnd; row++) {
+    const span = spans.get(row);
+    if (!span) continue;
+    const hi = Math.min(map.width - 1, span.hi);
+    for (let col = Math.max(0, span.lo); col <= hi; col++) cells.push({ col, row });
+  }
+  return cells;
 }
 
 /** Even-odd ray cast on the ground plane (x, z). */

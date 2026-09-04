@@ -117,14 +117,15 @@ export class ScatterTool extends BrushTool {
   }
 
   private floodFill(startCol: number, startRow: number): void {
-    const { map, chunks, selection } = this.ctx.scene;
-    // Same rule as the terrain flood: the selection boundary is a wall.
-    if (!selection.allows(startCol, startRow)) return;
+    const scene = this.ctx.scene;
+    const { map, chunks } = scene;
+    // Same rule as the terrain flood: the mask and lock boundary is a wall.
+    if (!scene.editable(startCol, startRow)) return;
     const sourceTerrain = map.getTerrain(startCol, startRow);
     if (this.terrainFilter.size > 0 && !this.terrainFilter.has(sourceTerrain)) return;
 
     const region = floodRegion(map.width, map.height, startCol, startRow,
-      (col, row) => map.getTerrain(col, row) === sourceTerrain && selection.allows(col, row));
+      (col, row) => map.getTerrain(col, row) === sourceTerrain && scene.editable(col, row));
     const tx = map.beginEdit();
     for (const { col, row } of region) {
       const elev = map.getElevation(col, row);

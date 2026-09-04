@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MapEdit, FactionDescriptor, ResourceDescriptor, TerrainDescriptor } from '@loyalj/hex-world';
 import { TerritoryTool } from '../src/tools/territoryTool.ts';
 import { ResourceTool } from '../src/tools/resourceTool.ts';
+import { UnitTool } from '../src/tools/unitTool.ts';
 import { initRosters, parseYields, formatYields } from '../src/ui/rosters.ts';
 import type { RostersApi } from '../src/ui/rosters.ts';
 import { loadEditorDom, makeCtx, makeScene } from './helpers.ts';
@@ -63,6 +64,7 @@ beforeEach(() => {
     ctx,
     territoryTool: new TerritoryTool(ctx),
     resourceTool:  new ResourceTool(ctx),
+    unitTool:      new UnitTool(ctx),
     terrains: () => TERRAINS,
   });
 });

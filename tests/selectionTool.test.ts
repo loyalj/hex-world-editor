@@ -226,6 +226,194 @@ describe('rectangle mode', () => {
     expect(s.selection.has(1, 1)).toBe(true);
     expect(s.selection.has(3, 2)).toBe(true);
   });
+
+  const dragBox = (): void => {
+    tool.pointerDown({ col: 1, row: 1 }, pev());
+    tool.pointerMove({ col: 7, row: 7 }, pev());
+    tool.pointerUp();
+  };
+
+  it('circle shape rounds off the box corners', () => {
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="rect"]');
+    clickOption('#rect-shape-group .brush-btn[data-marquee-shape="circle"]');
+    dragBox();
+    expect(s.selection.size).toBe(37);
+    expect(s.selection.has(4, 4)).toBe(true);  // centre
+    expect(s.selection.has(1, 4)).toBe(true);  // edge midpoints stay
+    expect(s.selection.has(4, 1)).toBe(true);
+    expect(s.selection.has(1, 1)).toBe(false); // corners drop
+    expect(s.selection.has(7, 7)).toBe(false);
+  });
+
+  it('hexagon shape is symmetric with smooth hex-line slants', () => {
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="rect"]');
+    clickOption('#rect-shape-group .brush-btn[data-marquee-shape="hexagon"]');
+    dragBox();
+    // Single-cell vertices top and bottom, straight full-width middle band,
+    // and mirrored slants — the hand-drawn hexagon for a 1:1 box.
+    expect(s.selection.size).toBe(29);
+    const widths = rowSpans();
+    expect([1, 2, 3, 4, 5, 6, 7].map(r => widths.get(r))).toEqual([1, 3, 7, 7, 7, 3, 1]);
+    expect(s.selection.has(4, 1)).toBe(true);  // top vertex
+    expect(s.selection.has(1, 4)).toBe(true);  // straight sides
+    expect(s.selection.has(7, 4)).toBe(true);
+    expect(s.selection.has(1, 1)).toBe(false); // corners drop
+    expect(s.selection.has(7, 7)).toBe(false);
+  });
+
+  /** Contiguous col span per row of the current selection, keyed by row. */
+  const rowSpans = (): Map<number, number> => {
+    const lo = new Map<number, number>();
+    const hi = new Map<number, number>();
+    for (const { col, row } of s.selection.cells()) {
+      lo.set(row, Math.min(lo.get(row) ?? Infinity, col));
+      hi.set(row, Math.max(hi.get(row) ?? -Infinity, col));
+    }
+    const widths = new Map<number, number>();
+    for (const [row, l] of lo) widths.set(row, hi.get(row)! - l + 1);
+    return widths;
+  };
+
+  it('a downward triangle drag points the apex south with smooth sides', () => {
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="rect"]');
+    clickOption('#rect-shape-group .brush-btn[data-marquee-shape="triangle"]');
+    dragBox(); // (1,1) → (7,7): base at the start row, apex at the far end
+    // A 1:1 box is the grid's natural equilateral triangle: each row toward
+    // the apex is exactly one cell narrower — hand-drawn-smooth sides.
+    expect(s.selection.size).toBe(28);
+    const widths = rowSpans();
+    for (let row = 1; row <= 7; row++) expect(widths.get(row)).toBe(8 - row);
+    expect(s.selection.has(4, 7)).toBe(true);  // apex on the bottom row
+    expect(s.selection.has(1, 1)).toBe(true);  // base row is full width
+    expect(s.selection.has(7, 1)).toBe(true);
+  });
+
+  it('an upward triangle drag points the apex north', () => {
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="rect"]');
+    clickOption('#rect-shape-group .brush-btn[data-marquee-shape="triangle"]');
+    tool.pointerDown({ col: 7, row: 7 }, pev());
+    tool.pointerMove({ col: 1, row: 1 }, pev());
+    tool.pointerUp();
+    expect(s.selection.size).toBe(28);
+    const widths = rowSpans();
+    for (let row = 1; row <= 7; row++) expect(widths.get(row)).toBe(row);
+    expect(s.selection.has(4, 1)).toBe(true);  // apex on the top row
+    expect(s.selection.has(1, 7)).toBe(true);  // base row is full width
+    expect(s.selection.has(7, 7)).toBe(true);
+  });
+
+  it('a mostly-eastward drag points the triangle east', () => {
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="rect"]');
+    clickOption('#rect-shape-group .brush-btn[data-marquee-shape="triangle"]');
+    tool.pointerDown({ col: 1, row: 2 }, pev());
+    tool.pointerMove({ col: 7, row: 6 }, pev()); // Δcol 6 > Δrow 4
+    tool.pointerUp();
+    expect(s.selection.size).toBe(21);
+    const widths = rowSpans();
+    expect([2, 3, 4, 5, 6].map(r => widths.get(r))).toEqual([2, 5, 7, 5, 2]);
+    expect(s.selection.has(7, 4)).toBe(true);  // apex centred on the far column
+    expect(s.selection.has(1, 2)).toBe(true);  // base column spans the box
+    expect(s.selection.has(1, 6)).toBe(true);
+    expect(s.selection.has(7, 2)).toBe(false); // far corners drop
+    expect(s.selection.has(7, 6)).toBe(false);
+  });
+
+  it('a mostly-westward drag points the triangle west', () => {
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="rect"]');
+    clickOption('#rect-shape-group .brush-btn[data-marquee-shape="triangle"]');
+    tool.pointerDown({ col: 7, row: 6 }, pev());
+    tool.pointerMove({ col: 1, row: 2 }, pev());
+    tool.pointerUp();
+    const widths = rowSpans();
+    expect(widths.get(4)).toBe(7);             // apex row runs base to tip
+    expect(widths.get(2)).toBe(widths.get(6)); // vertically symmetric
+    expect(widths.get(3)).toBe(widths.get(5));
+    expect(s.selection.has(1, 4)).toBe(true);  // apex centred on the far column
+    expect(s.selection.has(7, 2)).toBe(true);  // base column spans the box
+    expect(s.selection.has(7, 6)).toBe(true);
+    expect(s.selection.has(1, 2)).toBe(false); // far corners drop
+    expect(s.selection.has(1, 6)).toBe(false);
+  });
+
+  it('a wide shallow eastward drag fills every row with one contiguous span', () => {
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="rect"]');
+    clickOption('#rect-shape-group .brush-btn[data-marquee-shape="triangle"]');
+    tool.pointerDown({ col: 0, row: 0 }, pev());
+    tool.pointerMove({ col: 10, row: 4 }, pev()); // wide, shallow box → east
+    tool.pointerUp();
+    const widths = rowSpans();
+    expect(widths.get(2)).toBe(11);            // apex row runs base to tip
+    expect(s.selection.has(10, 2)).toBe(true); // apex
+    expect(s.selection.has(10, 0)).toBe(false);
+    expect(s.selection.has(10, 4)).toBe(false);
+    let cells = 0;
+    for (let row = 0; row <= 4; row++) {
+      expect(s.selection.has(0, row)).toBe(true); // base column is unbroken
+      cells += widths.get(row)!;
+    }
+    expect(cells).toBe(s.selection.size); // every row is a single span, no gaps
+  });
+
+  it('a tiny 2×2 circle still selects all four cells', () => {
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="rect"]');
+    clickOption('#rect-shape-group .brush-btn[data-marquee-shape="circle"]');
+    tool.pointerDown({ col: 2, row: 2 }, pev());
+    tool.pointerMove({ col: 3, row: 3 }, pev());
+    tool.pointerUp();
+    expect(s.selection.size).toBe(4);
+  });
+
+  it('holding Ctrl mid-drag locks the box to 1:1', () => {
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="rect"]');
+    tool.pointerDown({ col: 2, row: 2 }, pev());
+    tool.pointerMove({ col: 7, row: 4 }, pev({ ctrlKey: true }));
+    tool.pointerUp();
+    expect(s.selection.size).toBe(36); // 6×6 square, not 6×3
+    expect(s.selection.has(7, 7)).toBe(true);
+  });
+
+  it('releasing Ctrl mid-drag restores the free box', () => {
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="rect"]');
+    tool.pointerDown({ col: 2, row: 2 }, pev());
+    tool.pointerMove({ col: 7, row: 4 }, pev({ ctrlKey: true }));
+    tool.pointerMove({ col: 7, row: 4 }, pev());
+    tool.pointerUp();
+    expect(s.selection.size).toBe(18); // back to the dragged 6×3
+    expect(s.selection.has(7, 4)).toBe(true);
+    expect(s.selection.has(7, 5)).toBe(false);
+  });
+
+  it('a Ctrl-locked box overhanging the map clips at the border', () => {
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="rect"]');
+    tool.pointerDown({ col: 2, row: 2 }, pev());
+    tool.pointerMove({ col: 0, row: 7 }, pev({ ctrlKey: true })); // square corner projects to col −3
+    tool.pointerUp();
+    expect(s.selection.size).toBe(18); // cols 0–2 × rows 2–7
+    for (const { col, row } of s.selection.cells()) {
+      expect(s.map.inBounds(col, row)).toBe(true);
+    }
+  });
+
+  it('a Ctrl-locked triangle overhanging the map stays in bounds', () => {
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="rect"]');
+    clickOption('#rect-shape-group .brush-btn[data-marquee-shape="triangle"]');
+    tool.pointerDown({ col: 2, row: 2 }, pev());
+    tool.pointerMove({ col: 0, row: 7 }, pev({ ctrlKey: true }));
+    tool.pointerUp();
+    expect(s.selection.size).toBeGreaterThan(0);
+    for (const { col, row } of s.selection.cells()) {
+      expect(s.map.inBounds(col, row)).toBe(true);
+    }
+  });
+
+  it('the shape controls show only while in rect mode', () => {
+    const section = document.getElementById('rect-shape-section') as HTMLElement;
+    expect(section.classList.contains('hidden')).toBe(true);
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="rect"]');
+    expect(section.classList.contains('hidden')).toBe(false);
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="pointer"]');
+    expect(section.classList.contains('hidden')).toBe(true);
+  });
 });
 
 describe('keyboard', () => {

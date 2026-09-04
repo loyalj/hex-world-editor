@@ -1,17 +1,28 @@
 import type { SceneApi, CameraMode } from '../scene.ts';
+import { loadUiPref, storeUiPref } from './uiPrefs.ts';
 
 export interface MenusOptions {
   scene: SceneApi;
   minimapInvalidate(): void;
 }
 
+/** The chrome panels View ▸ Panels shows and hides. */
+export type PanelId = 'drawer' | 'minimap' | 'inspector' | 'locks';
+
+export interface MenusApi {
+  /** Show or hide a chrome panel, syncing its menu check and stored pref. */
+  setPanelVisible(panel: PanelId, visible: boolean): void;
+}
+
 /**
  * The menu bar's dropdown behaviour, the View menu's scene toggles (grid,
- * shadows, sky, god rays, skirt, camera mode, overlays), and the tool-drawer
- * visibility. File-menu entries wire themselves elsewhere: save/load in
- * persistence, terrain/liquid dialogs in the palette, New Map in main.
+ * shadows, sky, god rays, skirt, camera mode, overlays), and the View ▸ Panels
+ * chrome visibility (tool drawer plus the right-column panels, persisted as a
+ * per-browser preference). File-menu entries wire themselves elsewhere:
+ * save/load in persistence, terrain/liquid dialogs in the palette, New Map in
+ * main.
  */
-export function initMenus(opts: MenusOptions): void {
+export function initMenus(opts: MenusOptions): MenusApi {
   const { scene } = opts;
 
   // ---- Menu bar ----
@@ -50,23 +61,55 @@ export function initMenus(opts: MenusOptions): void {
   }
   document.addEventListener('click', closeMenus);
 
-  // ---- Tool drawer visibility ----
-  // User preference — the rail/View toggles flip it, tool switches don't.
-  const leftPanel   = document.getElementById('left-panel')   as HTMLElement;
-  const drawerCheck = document.getElementById('drawer-check') as HTMLElement;
-  let drawerOpen = true;
+  // ---- View ▸ Panels: chrome visibility ----
+  // User preferences — the menu toggles flip them, tool switches don't. The
+  // convention: the left drawer is the active tool's home; the right column is
+  // tool-independent surfaces (navigation, readout, global modifiers).
+  const rightPanel = document.getElementById('right-panel') as HTMLElement;
+  const PANELS: Record<PanelId, { el: HTMLElement; check: HTMLElement; btn: HTMLElement; def: boolean }> = {
+    drawer: {
+      el:    document.getElementById('left-panel')!,
+      check: document.getElementById('drawer-check')!,
+      btn:   document.getElementById('toggle-drawer-menu-btn')!,
+      def:   true,
+    },
+    minimap: {
+      el:    document.getElementById('minimap-panel')!,
+      check: document.getElementById('minimap-check')!,
+      btn:   document.getElementById('toggle-minimap-btn')!,
+      def:   true,
+    },
+    inspector: {
+      el:    document.getElementById('inspector-panel')!,
+      check: document.getElementById('inspector-check')!,
+      btn:   document.getElementById('toggle-inspector-btn')!,
+      def:   true,
+    },
+    // Off until wanted — the status-strip chip surfaces active locks anyway.
+    locks: {
+      el:    document.getElementById('locks-panel')!,
+      check: document.getElementById('locks-check')!,
+      btn:   document.getElementById('toggle-locks-btn')!,
+      def:   false,
+    },
+  };
+  const panelOpen = {} as Record<PanelId, boolean>;
 
-  function setDrawerOpen(open: boolean): void {
-    drawerOpen = open;
-    leftPanel.classList.toggle('hidden', !drawerOpen);
-    drawerCheck.classList.toggle('hidden', !drawerOpen);
+  function setPanelVisible(id: PanelId, visible: boolean): void {
+    panelOpen[id] = visible;
+    const p = PANELS[id];
+    p.el.classList.toggle('hidden', !visible);
+    p.check.classList.toggle('hidden', !visible);
+    storeUiPref(`panel:${id}`, visible);
+    // With every right-column panel off, the empty column gives its width back.
+    rightPanel.classList.toggle('hidden',
+      !panelOpen.minimap && !panelOpen.inspector && !panelOpen.locks);
   }
 
-  (document.getElementById('toggle-drawer-btn') as HTMLButtonElement)
-    .addEventListener('click', () => setDrawerOpen(!drawerOpen));
-  (document.getElementById('toggle-drawer-menu-btn') as HTMLButtonElement)
-    .addEventListener('click', () => setDrawerOpen(!drawerOpen));
-  setDrawerOpen(true);
+  for (const id of Object.keys(PANELS) as PanelId[]) {
+    PANELS[id].btn.addEventListener('click', () => setPanelVisible(id, !panelOpen[id]));
+    setPanelVisible(id, loadUiPref(`panel:${id}`) ?? PANELS[id].def);
+  }
 
   // ---- View toggles ----
   /** A View-menu checkmark toggle driving one boolean scene setting. */
@@ -93,6 +136,7 @@ export function initMenus(opts: MenusOptions): void {
   });
   wireToggle('toggle-resources-btn', 'resources-check', true, on => scene.setResourcesVisible(on));
   wireToggle('toggle-scatter-btn',   'scatter-check',   true, on => scene.setScatterVisible(on));
+  wireToggle('toggle-units-btn',     'units-check',     true, on => scene.setUnitsVisible(on));
 
   // Camera mode is a radio, not a toggle: exactly one check is ever showing, and
   // re-picking the mode already in force is a no-op rather than a flip.
@@ -113,4 +157,6 @@ export function initMenus(opts: MenusOptions): void {
   (document.getElementById('camera-free-btn') as HTMLButtonElement)
     .addEventListener('click', () => setCameraMode('free'));
   setCameraMode(scene.cameraMode); // paint the checks from the scene's opening mode
+
+  return { setPanelVisible };
 }

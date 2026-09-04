@@ -5,6 +5,7 @@ import type { MapEdit, TerrainDefinition } from '@loyalj/hex-world';
 import type { SceneApi } from '../src/scene.ts';
 import type { ToolContext } from '../src/tools/tool.ts';
 import { SelectionModel } from '../src/selection.ts';
+import { LockModel } from '../src/locks.ts';
 
 /** The editor's water terrain index — the fake scene's isWater rule. */
 export const WATER = DEFAULT_WATER_TERRAIN_INDEX;
@@ -49,6 +50,12 @@ export function makeScene(width = 12, height = 12) {
     pickEdge() { return s.pickEdgeResult; },
     // A real SelectionModel: it's pure state, and the mask checks are real logic.
     selection: new SelectionModel(() => {}),
+    // Real locks too, and the same editable() gate the real scene exposes.
+    locks: new LockModel(),
+    hoverLockFeedback: true,
+    editable(col: number, row: number): boolean {
+      return s.selection.allows(col, row) && !s.locks.isLocked(s.map.getTerrain(col, row));
+    },
     selectionPreviews: [] as unknown[],
     setSelectionPreview(cells: unknown) { s.selectionPreviews.push(cells); },
     territory: null as unknown,
@@ -102,10 +109,14 @@ export function makeCtx(s: FakeScene): { ctx: ToolContext; edits: MapEdit[]; set
 
 /** A minimal pointer-event stand-in for Tool.pointerDown/pointerMove. */
 export function pev(
-  over: { altKey?: boolean; shiftKey?: boolean; clientX?: number; clientY?: number } = {},
+  over: {
+    altKey?: boolean; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean;
+    clientX?: number; clientY?: number;
+  } = {},
 ): PointerEvent {
   return {
-    altKey: false, shiftKey: false, clientX: 0, clientY: 0, preventDefault() {}, ...over,
+    altKey: false, shiftKey: false, ctrlKey: false, metaKey: false,
+    clientX: 0, clientY: 0, preventDefault() {}, ...over,
   } as unknown as PointerEvent;
 }
 

@@ -123,7 +123,7 @@ export class RoadTool implements Tool {
     if (this.mode === 'edge') {
       const hit = this.pickEdge(e);
       if (!hit) return;
-      if (!scene.selection.allows(hit.col, hit.row) || !scene.selection.allows(hit.nb.col, hit.nb.row)) return;
+      if (!scene.editable(hit.col, hit.row) || !scene.editable(hit.nb.col, hit.nb.row)) return;
       const placing = !scene.map.hasRoadThroughEdge(hit.col, hit.row, hit.edge);
       const tx = scene.map.beginEdit();
       for (const c of tx.setRoadEdge(hit.col, hit.row, hit.edge, placing, POINTY_TOP)) {
@@ -234,8 +234,8 @@ export class RoadTool implements Tool {
 
   private snapStart(cell: CellPos): CellPos {
     if (!this.snapToggle.checked) return { col: cell.col, row: cell.row };
-    const { map, selection } = this.ctx.scene;
-    return snapRoadStart(map, cell, (col, row) => selection.allows(col, row));
+    const scene = this.ctx.scene;
+    return snapRoadStart(scene.map, cell, (col, row) => scene.editable(col, row));
   }
 
   /**
@@ -327,7 +327,7 @@ export class RoadTool implements Tool {
    */
   private eraseRoadsAt(col: number, row: number): void {
     const scene = this.ctx.scene;
-    if (!scene.selection.allows(col, row)) return;
+    if (!scene.editable(col, row)) return;
     const key = row * scene.map.width + col;
     if (this.eraseVisited.has(key)) return;
     this.eraseVisited.add(key);
@@ -336,7 +336,7 @@ export class RoadTool implements Tool {
     for (let e = 0; e < 6; e++) {
       if (!scene.map.hasRoadThroughEdge(col, row, e)) continue;
       const nb = offsetNeighbor(col, row, EDGE_DIRS[e]);
-      if (scene.map.inBounds(nb.col, nb.row) && !scene.selection.allows(nb.col, nb.row)) continue;
+      if (scene.map.inBounds(nb.col, nb.row) && !scene.editable(nb.col, nb.row)) continue;
       // Paired write keeps both half-edges in agreement.
       for (const c of tx.setRoadEdge(col, row, e, false, POINTY_TOP)) {
         scene.chunks.markDirty(c.col, c.row);
@@ -352,8 +352,8 @@ export class RoadTool implements Tool {
       const b = hexToOffset(path[i + 1]);
       // A straight fallback leg can zigzag one cell past the map border.
       if (!scene.map.inBounds(a.col, a.row) || !scene.map.inBounds(b.col, b.row)) continue;
-      // An edge lies between two cells — masked unless both are selected.
-      if (!scene.selection.allows(a.col, a.row) || !scene.selection.allows(b.col, b.row)) continue;
+      // An edge lies between two cells — gated unless both are editable.
+      if (!scene.editable(a.col, a.row) || !scene.editable(b.col, b.row)) continue;
       const edge = edgeBetween(a.col, a.row, b.col, b.row);
       if (edge === null) continue;
       // Paired write keeps both half-edges in agreement.
