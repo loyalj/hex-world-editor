@@ -38,6 +38,9 @@ export function initToolManager(
 
   ctx.syncBrushRadius = () => {
     ctx.scene.brushRadius = active.brushRadius();
+    // Bound per sync so a tool switch can't leave the old tool's shape behind.
+    const shaped = active;
+    ctx.scene.brushFootprint = shaped.hoverFootprint ? cell => shaped.hoverFootprint!(cell) : null;
   };
   ctx.updateCursor = () => {
     viewport.classList.toggle('is-filling', active.wantsFillCursor?.() ?? false);

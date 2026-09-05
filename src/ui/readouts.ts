@@ -5,6 +5,7 @@ import type { ToolManager } from '../tools/toolManager.ts';
 import type { TerrainTool } from '../tools/terrainTool.ts';
 import type { EnvironmentTool } from '../tools/environmentTool.ts';
 import { DENSITY_LABELS } from '../tools/scatterTool.ts';
+import { computeRiverFlow, riverDestination, upstreamOf, cellKey } from '../tools/riverGraph.ts';
 
 export interface ReadoutsOptions {
   scene: SceneApi;
@@ -42,6 +43,29 @@ export function initReadouts(opts: ReadoutsOptions): void {
   const inspScatterRocks = document.getElementById('insp-scatter-rocks') as HTMLElement;
   const inspScatterBroadleaf = document.getElementById('insp-scatter-broadleaf') as HTMLElement;
   const inspScatterBushes    = document.getElementById('insp-scatter-bushes')    as HTMLElement;
+  const inspRiverFlow  = document.getElementById('insp-river-flow')  as HTMLElement;
+  const inspRiverTribs = document.getElementById('insp-river-tribs') as HTMLElement;
+  const inspRiverDest  = document.getElementById('insp-river-dest')  as HTMLElement;
+  const riverRows = document.querySelectorAll<HTMLElement>('.insp-row--river');
+
+  // Accumulated flow is a whole-map walk; the scene revision says when the
+  // rivers could have changed, so one walk serves every hover in between.
+  let flowCache: { revision: number; flow: Map<number, number> } | null = null;
+  function riverFlow(): Map<number, number> {
+    if (!flowCache || flowCache.revision !== scene.revision) {
+      flowCache = { revision: scene.revision, flow: computeRiverFlow(scene.map) };
+    }
+    return flowCache.flow;
+  }
+
+  function destinationLabel(col: number, row: number): string {
+    const dest = riverDestination(scene.map, t => scene.isWater(t), col, row);
+    if (!dest) return '—';
+    const at = `${dest.col}, ${dest.row}`;
+    if (dest.kind === 'water') return `water at ${at} · ${dest.length} cells`;
+    if (dest.kind === 'cycle') return `loops at ${at}`;
+    return `land at ${at} · dead end`;
+  }
 
   function riverLabel(col: number, row: number): string {
     const { map } = scene;
@@ -67,6 +91,13 @@ export function initReadouts(opts: ReadoutsOptions): void {
       inspTerrain.textContent       = scene.terrainLookup.get(terrain)?.name ?? String(terrain);
       inspElev.textContent          = String(elev);
       inspRiver.textContent         = riverLabel(cell.col, cell.row);
+      const hasRiver = map.hasRiver(cell.col, cell.row);
+      riverRows.forEach(r => r.classList.toggle('hidden', !hasRiver));
+      if (hasRiver) {
+        inspRiverFlow.textContent  = String(riverFlow().get(cellKey(map, cell.col, cell.row)) ?? 1);
+        inspRiverTribs.textContent = String(upstreamOf(map, cell.col, cell.row).length);
+        inspRiverDest.textContent  = destinationLabel(cell.col, cell.row);
+      }
       inspRoad.textContent          = hasRoad ? 'yes' : 'no';
       inspScatterTrees.textContent     = label(0);
       inspScatterBroadleaf.textContent = label(2);
@@ -78,6 +109,7 @@ export function initReadouts(opts: ReadoutsOptions): void {
       statusElev.textContent = `elev ${elev}`;
     } else {
       inspSwatch.style.background = '';
+      riverRows.forEach(r => r.classList.add('hidden'));
       inspPos.textContent = inspTerrain.textContent = inspElev.textContent =
         inspRiver.textContent = inspRoad.textContent = inspRoadCost.textContent =
         inspScatterTrees.textContent = inspScatterRocks.textContent =

@@ -87,6 +87,8 @@
                 <button class="menu-item" id="toggle-grid-btn">Hex grid <span id="grid-check" class="menu-check hidden">&#10003;</span></button>
                 <button class="menu-item" id="toggle-heatmap-btn">Elevation heatmap <span id="heatmap-check" class="menu-check hidden">&#10003;</span></button>
                 <button class="menu-item" id="toggle-contours-btn">Contour lines <span id="contours-check" class="menu-check hidden">&#10003;</span></button>
+                <button class="menu-item" id="toggle-riverflow-btn">River flow <span id="riverflow-check" class="menu-check hidden">&#10003;</span></button>
+                <button class="menu-item" id="toggle-basins-btn">Drainage basins <span id="basins-check" class="menu-check hidden">&#10003;</span></button>
               </div>
             </div>
             <div class="menu-submenu">
@@ -122,6 +124,7 @@
                 <button class="menu-item" id="toggle-minimap-btn">Minimap <span id="minimap-check" class="menu-check">&#10003;</span></button>
                 <button class="menu-item" id="toggle-inspector-btn">Inspector <span id="inspector-check" class="menu-check">&#10003;</span></button>
                 <button class="menu-item" id="toggle-locks-btn">Locks <span id="locks-check" class="menu-check hidden">&#10003;</span></button>
+                <button class="menu-item" id="toggle-terrains-btn">Terrains <span id="terrains-check" class="menu-check hidden">&#10003;</span></button>
               </div>
             </div>
           </div>
@@ -272,12 +275,46 @@
                 <button class="scatter-type-btn active" data-terrain-mode="brush" title="Paint with brush">Brush</button>
                 <button class="scatter-type-btn" data-terrain-mode="fill" title="Flood fill connected region">Fill</button>
               </div>
-              <div class="group-header" id="terrain-brush-header">Brush</div>
-              <div class="brush-group" id="terrain-brush-group">
-                <button class="brush-btn active" data-brush="0" title="1 cell"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"  fill="currentColor"/></svg></button>
-                <button class="brush-btn"        data-brush="1" title="7 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"  fill="currentColor"/></svg></button>
-                <button class="brush-btn"        data-brush="2" title="19 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"  fill="currentColor"/></svg></button>
-                <button class="brush-btn"        data-brush="3" title="37 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="currentColor"/></svg></button>
+              <div class="group-header" id="terrain-brush-header" data-tip="Solid fills the whole footprint. Ring paints only its outer band. Spray paints a random share of it. [ and ] change the size.">Brush</div>
+              <div id="terrain-brush-group">
+                <div class="segmented" id="terrain-shape-group">
+                  <button class="scatter-type-btn active" data-brush-shape="solid" title="Solid — fill the whole footprint">Solid</button>
+                  <button class="scatter-type-btn" data-brush-shape="ring" title="Ring — only the footprint's outer band">Ring</button>
+                  <button class="scatter-type-btn" data-brush-shape="spray" title="Spray — a random share of the footprint">Spray</button>
+                </div>
+                <div class="slider-row slider-row--labeled">
+                  <span class="slider-label">Size</span>
+                  <input type="range" id="terrain-brush-size" min="0" max="12" step="1" value="0" autocomplete="off" />
+                  <span class="slider-value" id="terrain-brush-size-value">1 cell</span>
+                </div>
+                <div class="slider-row slider-row--labeled" id="terrain-hardness-row">
+                  <span class="slider-label">Hardness</span>
+                  <input type="range" id="terrain-hardness" min="0" max="100" step="5" value="100" autocomplete="off" />
+                  <span class="slider-value" id="terrain-hardness-value">100%</span>
+                </div>
+                <div class="slider-row slider-row--labeled hidden" id="terrain-density-row">
+                  <span class="slider-label">Density</span>
+                  <input type="range" id="terrain-density" min="5" max="100" step="5" value="50" autocomplete="off" />
+                  <span class="slider-value" id="terrain-density-value">50%</span>
+                </div>
+              </div>
+              <div id="terrain-fill-group" class="hidden">
+                <div class="group-header" data-tip="Exact fills cells of the clicked terrain. Category treats every solid, or every liquid, as one terrain. Custom fills the terrains ticked below, wherever you click. Elevation fills cells within the tolerance of the clicked cell's height, whatever their terrain.">Fill matches</div>
+                <div class="segmented" id="terrain-fill-match-group">
+                  <button class="scatter-type-btn active" data-fill-match="exact" title="Cells of the clicked cell's terrain">Exact</button>
+                  <button class="scatter-type-btn" data-fill-match="category" title="Any solid if you click solid ground; any liquid if you click liquid">Category</button>
+                  <button class="scatter-type-btn" data-fill-match="set" title="The terrains ticked below">Custom</button>
+                  <button class="scatter-type-btn" data-fill-match="elevation" title="Cells near the clicked cell's elevation">Elevation</button>
+                </div>
+                <div id="terrain-fill-set" class="terrain-filter-group hidden"></div>
+                <div id="terrain-fill-tolerance-row" class="field hidden">
+                  <span>Tolerance &plusmn;</span>
+                  <input type="number" id="terrain-fill-tolerance" value="0" min="0" max="255" autocomplete="off" />
+                </div>
+                <label class="toggle-row">
+                  <span class="tip-host" data-tip="On fills only the connected region under the cursor; off fills every matching cell on the map.">Contiguous</span>
+                  <input type="checkbox" id="terrain-fill-contiguous" checked />
+                </label>
               </div>
             </div>
 
@@ -291,6 +328,11 @@
                 <button class="density-btn" data-elev-mode="set-absolute">Set absolute</button>
                 <button class="density-btn" data-elev-mode="slope">Slope ramp</button>
                 <button class="density-btn" data-elev-mode="erosion">Erosion</button>
+              </div>
+              <div class="group-header" data-tip="Brush applies the mode under the cursor. Fill applies it across a region matching the clicked cell — by elevation (within a tolerance) or by terrain, connected or map-wide.">Apply with</div>
+              <div class="segmented" id="elev-scope-group">
+                <button class="scatter-type-btn active" data-elev-scope="brush" title="Apply under the brush">Brush</button>
+                <button class="scatter-type-btn" data-elev-scope="fill" title="Apply across a matching region">Fill</button>
               </div>
               <div id="elev-set-target-row" class="field hidden">
                 <span>Target elevation</span>
@@ -330,12 +372,43 @@
                 <label class="elev-range-label">Min<input type="number" id="elev-range-min" value="-128" min="-128" max="127" autocomplete="off" /></label>
                 <label class="elev-range-label">Max<input type="number" id="elev-range-max" value="127"  min="-128" max="127" autocomplete="off" /></label>
               </div>
-              <div class="group-header">Brush</div>
-              <div class="brush-group" id="elev-brush-group">
-                <button class="brush-btn active" data-brush="0" title="1 cell"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"  fill="currentColor"/></svg></button>
-                <button class="brush-btn"        data-brush="1" title="7 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"  fill="currentColor"/></svg></button>
-                <button class="brush-btn"        data-brush="2" title="19 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"  fill="currentColor"/></svg></button>
-                <button class="brush-btn"        data-brush="3" title="37 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="currentColor"/></svg></button>
+              <div class="group-header" id="elev-brush-header" data-tip="Solid fills the whole footprint. Ring paints only its outer band. Spray hits a random share of it. [ and ] change the size.">Brush</div>
+              <div id="elev-brush-group">
+                <div class="segmented" id="elev-shape-group">
+                  <button class="scatter-type-btn active" data-brush-shape="solid" title="Solid — the whole footprint">Solid</button>
+                  <button class="scatter-type-btn" data-brush-shape="ring" title="Ring — only the footprint's outer band">Ring</button>
+                  <button class="scatter-type-btn" data-brush-shape="spray" title="Spray — a random share of the footprint">Spray</button>
+                </div>
+                <div class="slider-row slider-row--labeled">
+                  <span class="slider-label">Size</span>
+                  <input type="range" id="elev-brush-size" min="0" max="12" step="1" value="0" autocomplete="off" />
+                  <span class="slider-value" id="elev-brush-size-value">1 cell</span>
+                </div>
+                <div class="slider-row slider-row--labeled" id="elev-hardness-row">
+                  <span class="slider-label">Hardness</span>
+                  <input type="range" id="elev-hardness" min="0" max="100" step="5" value="100" autocomplete="off" />
+                  <span class="slider-value" id="elev-hardness-value">100%</span>
+                </div>
+                <div class="slider-row slider-row--labeled hidden" id="elev-density-row">
+                  <span class="slider-label">Density</span>
+                  <input type="range" id="elev-density" min="5" max="100" step="5" value="50" autocomplete="off" />
+                  <span class="slider-value" id="elev-density-value">50%</span>
+                </div>
+              </div>
+              <div id="elev-fill-group" class="hidden">
+                <div class="group-header" data-tip="Elevation fills cells within the tolerance of the clicked cell's height. Terrain fills cells sharing its terrain.">Fill matches</div>
+                <div class="segmented" id="elev-fill-match-group">
+                  <button class="scatter-type-btn active" data-fill-match="elevation" title="Cells near the clicked cell's elevation">Elevation</button>
+                  <button class="scatter-type-btn" data-fill-match="terrain" title="Cells sharing the clicked cell's terrain">Terrain</button>
+                </div>
+                <div id="elev-fill-tolerance-row" class="field">
+                  <span>Tolerance &plusmn;</span>
+                  <input type="number" id="elev-fill-tolerance" value="0" min="0" max="255" autocomplete="off" />
+                </div>
+                <label class="toggle-row">
+                  <span class="tip-host" data-tip="On fills only the connected region under the cursor; off fills every matching cell on the map.">Contiguous</span>
+                  <input type="checkbox" id="elev-fill-contiguous" checked />
+                </label>
               </div>
             </div>
 
@@ -409,12 +482,32 @@
                     <path d="M4 20.5 q2 -1.6 4 0 t4 0 t4 0 t4 0" stroke="currentColor" stroke-width="1.6"/>
                   </svg>
                 </button>
+                <button class="brush-btn" data-river-mode="reverse" title="Reverse flow">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M5 9 C9 9 9 15 13 15 L18 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    <path d="M15.5 12 L18.5 15 L15.5 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M8 6 L5 9 L8 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
                 <button class="brush-btn" data-river-mode="erase" title="Erase">
                   <svg viewBox="0 0 24 24" fill="none">
                     <path d="M13.5 4.5 L19.5 10.5 L10.5 19.5 L4.5 13.5 Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
                     <line x1="7.5" y1="10.5" x2="13.5" y2="16.5" stroke="currentColor" stroke-width="2"/>
                   </svg>
                 </button>
+              </div>
+              <div class="segmented hidden" id="river-erase-scope-group">
+                <button class="scatter-type-btn active" data-erase-scope="cell" title="Erase the cells you click or drag over">Cells</button>
+                <button class="scatter-type-btn" data-erase-scope="river" title="Erase the whole river system under the click">Whole river</button>
+              </div>
+              <label class="toggle-row" id="river-lake-row">
+                <span class="tip-host" data-tip="When a river ends on land instead of reaching water, turn the ground around its last cell into a lake so it has somewhere to end. Applies to drags, waypoints, and downhill traces.">Lake at dead ends</span>
+                <input type="checkbox" id="river-lake-at-sinks" />
+              </label>
+              <div class="group-header" id="river-actions-header">Rivers</div>
+              <div class="option-list">
+                <button id="river-audit-btn" title="List uphill runs, loops, dead ends, dangling edges, and low sources">Check rivers…</button>
+                <button id="river-clear-btn" title="Remove every river in the selection, or on the whole map with nothing selected">Clear rivers</button>
               </div>
             </div>
 
@@ -706,6 +799,15 @@
               <button id="locks-unlock-all" title="Remove every terrain lock">Unlock all</button>
             </div>
           </div>
+          <div class="panel hidden" id="terrains-panel">
+            <div class="panel-head">
+              <div class="panel-title" title="Cells per terrain. Click a row to select every cell of that terrain; Shift adds, Alt removes.">Terrains</div>
+              <div class="badge" id="terrains-count">0 of 0</div>
+            </div>
+            <div id="terrains-list" class="stat-list">
+              <!-- populated by terrainStatsPanel.ts -->
+            </div>
+          </div>
           <div class="panel" id="inspector-panel">
             <div class="panel-title">Inspector</div>
             <div class="insp-head">
@@ -721,6 +823,9 @@
             </div>
             <div id="inspector">
               <div class="insp-row"><span>River</span><span id="insp-river">—</span></div>
+              <div class="insp-row insp-row--river hidden"><span>Flow</span><span id="insp-river-flow">—</span></div>
+              <div class="insp-row insp-row--river hidden"><span>Tributaries</span><span id="insp-river-tribs">—</span></div>
+              <div class="insp-row insp-row--river hidden"><span>Drains to</span><span id="insp-river-dest">—</span></div>
               <div class="insp-row"><span>Road</span><span id="insp-road">—</span></div>
               <div class="insp-row"><span>Pines</span><span id="insp-scatter-trees">—</span></div>
               <div class="insp-row"><span>Broadleaf</span><span id="insp-scatter-broadleaf">—</span></div>
@@ -836,6 +941,21 @@
       </div>
     </dialog>
 
+    <dialog id="river-audit-dialog">
+      <div class="dialog-header">
+        <span class="dialog-title">River Check</span>
+        <button class="dialog-close" id="river-audit-close-btn">&#x2715;</button>
+      </div>
+      <div class="dialog-body">
+        <div id="river-audit-summary" class="audit-summary">—</div>
+        <label class="field">
+          <span>Sources should sit at or above elevation</span>
+          <input type="number" id="river-audit-min-source" value="2" min="-128" max="127" autocomplete="off" />
+        </label>
+        <div id="river-audit-list" class="audit-list"></div>
+        <button class="wiz-btn" id="river-audit-rerun-btn">Check again</button>
+      </div>
+    </dialog>
     <dialog id="liquid-dialog">
       <div class="dialog-header">
         <span class="dialog-title">Liquid Types</span>

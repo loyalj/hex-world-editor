@@ -14,7 +14,8 @@ import type {
   LiquidTypeDescriptor, WeatherType, FactionDescriptor, ResourceDescriptor,
   TerritoryLayer, ResourceLayer, HexLayout, SeasonScope,
 } from '@loyalj/hex-world';
-import { computeElevationRanges, heatmapColor, contourThresholds } from './analysis.ts';
+import { computeElevationRanges, heatmapColor, contourThresholds, riverFlowColor, basinColor } from './analysis.ts';
+import { computeRiverFlow, riverBasins } from './tools/riverGraph.ts';
 import { SelectionModel } from './selection.ts';
 import { LockModel } from './locks.ts';
 import { UNIT_TYPES, unitAt } from './unitTypes.ts';
@@ -99,6 +100,19 @@ export interface SceneApi {
   hoveredCell: { col: number; row: number } | null;
   brushRadius: number;
   /**
+   * Bumped whenever something a cached view of the map could depend on
+   * changes: map contents (every history change, reload, replace), the
+   * selection mask, the terrain locks, or the terrain roster. Caches key on
+   * it rather than subscribing to each source.
+   */
+  readonly revision: number;
+  bumpRevision(): void;
+  /**
+   * Overrides the hover footprint's shape when set: the cells to outline
+   * around the hovered cell instead of the filled hex of brushRadius.
+   */
+  brushFootprint: ((cell: { col: number; row: number }) => Array<{ col: number; row: number }>) | null;
+  /**
    * Whether the hover footprint should flag cells the selection mask excludes
    * (dim red tint). The tool manager keeps it in sync with the active tool —
    * false for tools the mask doesn't confine.
@@ -118,6 +132,10 @@ export interface SceneApi {
   setElevationHeatmap(visible: boolean): void;
   /** Iso-elevation outlines at round intervals chosen from the map's range. */
   setContourLines(visible: boolean): void;
+  /** Tint river cells by accumulated flow — headwaters pale, main stems deep. */
+  setRiverFlowOverlay(visible: boolean): void;
+  /** Tint river cells by drainage basin — every river sharing a mouth shares a hue. */
+  setDrainageBasins(visible: boolean): void;
   /**
    * Rebuild whichever analysis overlays are on from the current map. Cheap
    * no-op while both are off, so callers may fire it on every commit the same
@@ -515,6 +533,8 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
   // ---- Analysis overlays ----
   let heatmapOn  = false;
   let contoursOn = false;
+  let riverFlowOn = false;
+  let basinsOn    = false;
   // Contour lines are one overlay entry per threshold; the count varies with
   // the map's range, so remember how many ids exist and hide the leftovers
   // when the count shrinks (hiding is cheap, the entries are reused on re-show).
@@ -545,6 +565,41 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
       });
     } else {
       world.overlays.set('analysis-heatmap', null);
+    }
+
+    // River overlays share one pass over the river cells; flow wins when both
+    // are on, since a basin tint under a flow tint would just muddy it.
+    if (riverFlowOn || basinsOn) {
+      const riverCells: Array<{ col: number; row: number }> = [];
+      for (let row = 0; row < map.height; row++) {
+        for (let col = 0; col < map.width; col++) if (map.hasRiver(col, row)) riverCells.push({ col, row });
+      }
+      const key = (c: { col: number; row: number }): number => c.row * map.width + c.col;
+      if (riverFlowOn) {
+        const flow = computeRiverFlow(map);
+        let max = 1;
+        for (const f of flow.values()) max = Math.max(max, f);
+        world.overlays.set('analysis-river-flow', riverCells, {
+          cellColor: c => riverFlowColor(flow.get(key(c)) ?? 1, max),
+          opacity: 0.85, walls: true, renderOrder: 4,
+        });
+      } else {
+        world.overlays.set('analysis-river-flow', null);
+      }
+      if (basinsOn && !riverFlowOn) {
+        const basins = riverBasins(map, t => world.isWater(t));
+        const order = new Map<number, number>();
+        for (const b of basins.values()) if (!order.has(b)) order.set(b, order.size);
+        world.overlays.set('analysis-basins', riverCells, {
+          cellColor: c => basinColor(order.get(basins.get(key(c)) ?? -1) ?? 0),
+          opacity: 0.85, walls: true, renderOrder: 4,
+        });
+      } else {
+        world.overlays.set('analysis-basins', null);
+      }
+    } else {
+      world.overlays.set('analysis-river-flow', null);
+      world.overlays.set('analysis-basins', null);
     }
 
     const thresholds = contoursOn && ranges ? contourThresholds(ranges.all) : [];
@@ -585,7 +640,9 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
   world.onFrame = (dt: number) => {
     api.hoveredCell = world.hoveredCell;
     const hoverCells = world.hoveredCell
-      ? hexRange(offsetToHex(world.hoveredCell.col, world.hoveredCell.row), api.brushRadius).map(hexToOffset)
+      ? api.brushFootprint
+        ? api.brushFootprint(world.hoveredCell)
+        : hexRange(offsetToHex(world.hoveredCell.col, world.hoveredCell.row), api.brushRadius).map(hexToOffset)
       : null;
     const maskFeedback = api.hoverMaskFeedback && selection.size > 0;
     const lockFeedback = api.hoverLockFeedback && locks.size > 0;
@@ -655,7 +712,10 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
   const ANTS_HALF_WIDTH = 0.05;
   const ANTS_Y_OFFSET   = 0.04;
 
+  let revision = 0;
+
   function rebuildSelectionHighlight(): void {
+    revision++;
     const cells = selection.cells();
     // Fill under the hover overlay (renderOrder 5) so the brush footprint reads on top.
     world.overlays.set('selection', cells.length > 0 ? cells : null,
@@ -764,14 +824,19 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     get chunks() { return world.chunks; },
     hoveredCell: null,
     brushRadius: 0,
+    get revision() { return revision; },
+    bumpRevision() { revision++; },
+    brushFootprint: null,
     hoverMaskFeedback: true,
     hoverLockFeedback: true,
     reload() {
+      revision++;
       world.chunks.dispose();
       world.skirt?.rebuild();
     },
     refreshSkirt() { world.skirt?.rebuild(); },
     replaceMap(newMap: HexMap): void {
+      revision++;
       world.setMap(newMap);
       // A different map means a different size and a different explored set;
       // ensureFog rebuilds when the dimensions no longer match.
@@ -794,6 +859,14 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     },
     setContourLines(visible: boolean): void {
       contoursOn = visible;
+      refreshAnalysisOverlays();
+    },
+    setRiverFlowOverlay(visible: boolean): void {
+      riverFlowOn = visible;
+      refreshAnalysisOverlays();
+    },
+    setDrainageBasins(visible: boolean): void {
+      basinsOn = visible;
       refreshAnalysisOverlays();
     },
     refreshAnalysisOverlays,
@@ -1061,6 +1134,7 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     },
     async rebuildTerrainFromDescriptors(descriptors: TerrainDescriptor[], registry: TerrainAssetRegistry): Promise<void> {
       await world.setTerrainDescriptors(descriptors, registry);
+      revision++; // which terrains count as liquid may have changed
       // A palette swap can change which terrains count as water, which decides
       // each cell's heatmap ramp.
       refreshAnalysisOverlays();
@@ -1081,6 +1155,7 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
       const oldMat = world.applyTerrainDefinitions(pkg.terrainDefinitions, pkg.terrainMaterial);
       if (oldMat !== pkg.terrainMaterial) oldMat.dispose();
       world.setLiquidDescriptors(pkg.liquidDescriptors, pkg.liquidMaterials);
+      revision++;
       refreshAnalysisOverlays(); // the pack redefines the water terrain set
       return {
         terrainDescriptors:  pkg.terrainDescriptors,

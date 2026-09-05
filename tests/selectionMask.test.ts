@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { MapEdit } from '@loyalj/hex-world';
 import { TerrainTool } from '../src/tools/terrainTool.ts';
 import { RoadTool } from '../src/tools/roadTool.ts';
-import { clickOption, countCells, loadEditorDom, makeCtx, makeScene, pev } from './helpers.ts';
+import { clickOption, countCells, loadEditorDom, makeCtx, makeScene, pev, setInput } from './helpers.ts';
 import type { FakeScene } from './helpers.ts';
 import type { ToolContext } from '../src/tools/tool.ts';
 
@@ -31,7 +31,7 @@ describe('brush stamps under a selection mask', () => {
     tool.paintTerrain = 1;
     select([{ col: 4, row: 4 }, { col: 5, row: 4 }]);
 
-    clickOption('#terrain-brush-group .brush-btn[data-brush="2"]'); // 19 cells
+    setInput('terrain-brush-size', '2'); // 19 cells
     tool.pointerDown({ col: 4, row: 4 }, pev());
     tool.pointerUp();
 

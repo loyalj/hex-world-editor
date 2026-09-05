@@ -6,6 +6,8 @@ export interface LocksPanelOptions {
   scene: SceneApi;
   /** Live getter — the palette owns the descriptors and swaps them on load. */
   terrains(): TerrainDescriptor[];
+  /** The palette's terrain thumbnail for a chip, when rendered. */
+  previewFor?(index: number): string | null;
   /** Reveal the Locks panel (flips View ▸ Panels ▸ Locks on). Wired by main. */
   showPanel(): void;
 }
@@ -36,7 +38,7 @@ export function initLocksPanel(opts: LocksPanelOptions): LocksPanelApi {
     for (const desc of opts.terrains()) {
       const locked = scene.locks.isLocked(desc.index);
       const row = buildChipRow(String(desc.index), desc.name, desc.color, false,
-        () => scene.locks.toggle(desc.index));
+        () => scene.locks.toggle(desc.index), opts.previewFor?.(desc.index));
       row.title = locked
         ? `${desc.name} is locked — no tool can modify its cells`
         : `Lock ${desc.name} — protect its cells from every tool`;

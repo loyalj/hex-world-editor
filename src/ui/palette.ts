@@ -1,6 +1,7 @@
 import { DEFAULT_TERRAIN_DESCRIPTORS, DEFAULT_LIQUID_DESCRIPTORS } from '@loyalj/hex-world';
 import type { TerrainDescriptor, TerrainAssetRegistry, LiquidTypeDescriptor } from '@loyalj/hex-world';
 import { wireOptionGroup } from './uiHelpers.ts';
+import { renderSwatchPreviews, styleChip } from './swatchPreviews.ts';
 import type { SceneApi } from '../scene.ts';
 import type { TerrainTool } from '../tools/terrainTool.ts';
 import type { ScatterTool } from '../tools/scatterTool.ts';
@@ -43,6 +44,12 @@ export interface PaletteApi {
   readonly textureAssets: Map<string, Blob>;
   /** The texture images as data URLs, for embedding in a JSON save. */
   textureAssetsAsDataURLs(): Promise<Record<string, string>>;
+  /**
+   * A thumbnail of the terrain's actual texture, as a data URL, or null
+   * before the thumbnails have rendered. Other chips (locks, terrain stats)
+   * read it so every swatch of a terrain looks the same.
+   */
+  previewFor(index: number): string | null;
   openTerrainDialog(editIndex: number | null, presetLiquid?: string): void;
   openLiquidDialog(): void;
   /**
@@ -104,6 +111,9 @@ export function initPalette(opts: PaletteOptions): PaletteApi {
   const terrainAssetRegistry: TerrainAssetRegistry = new Map();
   let pendingTerrainImage: File | null = null;
   let editingTerrainIndex: number | null = null;
+  /** Terrain thumbnails by index; refreshed after every roster change. */
+  let previews = new Map<number, string>();
+  let previewRun = 0;
   let liquidDescriptors: LiquidTypeDescriptor[] = structuredClone(DEFAULT_LIQUID_DESCRIPTORS);
 
   const DEFAULT_TERRAIN_IDS = new Set(DEFAULT_TERRAIN_DESCRIPTORS.map(d => d.id));
@@ -182,7 +192,7 @@ export function initPalette(opts: PaletteOptions): PaletteApi {
 
     const chip = document.createElement('span');
     chip.className = 'swatch-chip';
-    chip.style.background = `#${desc.color.toString(16).padStart(6, '0')}`;
+    styleChip(chip, desc.color, previews.get(desc.index));
     btn.appendChild(chip);
 
     const name = document.createElement('span');
@@ -220,10 +230,28 @@ export function initPalette(opts: PaletteOptions): PaletteApi {
   function renderTerrainPalette(): void {
     renderSwatchGrid();
     scatterTool.refreshTerrainFilter(terrainDescriptors);
+    terrainTool.refreshFillSet(terrainDescriptors);
     opts.onTerrainsChanged?.();
     // Terrain colors drive the minimap's fills, and a palette edit never touches
     // the undo stack — this is the only signal that they changed.
     opts.minimapInvalidate();
+    refreshPreviews();
+  }
+
+  /**
+   * Re-render the thumbnails for the current roster, then repaint every chip
+   * that shows one. Async and cancellable: a roster change mid-render drops
+   * the stale result rather than painting it over the newer swatches.
+   */
+  function refreshPreviews(): void {
+    const run = ++previewRun;
+    const descriptors = terrainDescriptors;
+    void renderSwatchPreviews(descriptors, terrainAssetRegistry).then(next => {
+      if (run !== previewRun || next.size === 0) return;
+      previews = next;
+      renderSwatchGrid();
+      opts.onTerrainsChanged?.();
+    });
   }
 
   // ---- Add Terrain dialog ----
@@ -430,6 +458,7 @@ export function initPalette(opts: PaletteOptions): PaletteApi {
       }
       return out;
     },
+    previewFor: index => previews.get(index) ?? null,
     openTerrainDialog,
     openLiquidDialog,
     async applyLoadedDescriptors(terrains, liquids, images) {

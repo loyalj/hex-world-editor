@@ -1,3 +1,5 @@
+import { styleChip } from './swatchPreviews.ts';
+
 /**
  * Wire a group of buttons where exactly one is active at a time. Clicking a
  * button moves the `active` class to it and reports the pick. Returns the
@@ -23,10 +25,13 @@ export function wireBrushGroup(groupId: string, onPick: (radius: number) => void
   wireOptionGroup(`#${groupId} .brush-btn`, btn => onPick(parseInt(btn.dataset['brush']!, 10)));
 }
 
-/** A colour-chip palette row, matching the terrain palette's look. */
+/**
+ * A colour-chip palette row, matching the terrain palette's look. A preview
+ * URL (a terrain thumbnail) paints the chip in place of the flat colour.
+ */
 export function buildChipRow(
   id: string, name: string, color: number, selected: boolean,
-  onPick: () => void,
+  onPick: () => void, previewUrl?: string | null,
 ): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.className = 'swatch-row';
@@ -36,7 +41,7 @@ export function buildChipRow(
 
   const chip = document.createElement('span');
   chip.className = 'swatch-chip';
-  chip.style.background = `#${color.toString(16).padStart(6, '0')}`;
+  styleChip(chip, color, previewUrl);
   btn.appendChild(chip);
 
   const label = document.createElement('span');

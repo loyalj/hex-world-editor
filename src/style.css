@@ -303,6 +303,9 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Rows share the width instead of scrolling sideways: overflow-y: auto
+     alone would turn on a horizontal scrollbar as well. */
+  overflow-x: hidden;
   padding: 0 18px 18px;
 }
 
@@ -677,12 +680,15 @@ body {
 .tool-panel > .group-header:first-child,
 #config-fields > .group-header:first-child { margin-top: 0; }
 
-/* The Selection actions sit at the drawer's floor: the panel stretches to
-   the drawer body's height and the header's auto margin swallows the free
-   space, carrying everything after it down with it. The padding keeps the
-   usual group gap when the drawer is too short to have free space. */
-#selection-options { min-height: 100%; }
-#selection-actions-header {
+/* The Selection and Rivers actions sit at the drawer's floor: the panel
+   stretches to the drawer body's height and the header's auto margin
+   swallows the free space, carrying everything after it down with it. The
+   padding keeps the usual group gap when the drawer is too short to have
+   free space. */
+#selection-options,
+#river-options { min-height: 100%; }
+#selection-actions-header,
+#river-actions-header {
   margin-top: auto;
   padding-top: 22px;
 }
@@ -756,6 +762,10 @@ body {
 
 .brush-btn {
   flex: 1;
+  /* A six-button row (rivers) is narrower than six icons plus padding, so
+     let the buttons shrink past their icon; it overlaps the padding, not
+     its neighbours, and the 40px height keeps the icon centred. */
+  min-width: 0;
   height: 40px;
   display: grid;
   place-items: center;
@@ -764,7 +774,7 @@ body {
   border-radius: var(--r-control);
   color: var(--fg-muted);
   cursor: pointer;
-  padding: 8px;
+  padding: 6px;
 }
 
 /* Fixed square so the 24×24 viewBox never stretches on a wide button — the
@@ -802,6 +812,100 @@ body {
   color: var(--fg-2);
   font-variant-numeric: tabular-nums;
 }
+
+/* River check dialog: grouped issue rows, each a jump to the cell. */
+.audit-summary { color: var(--fg-2); font-size: 13.5px; }
+.audit-list { display: flex; flex-direction: column; gap: 3px; max-height: 45vh; overflow-y: auto; }
+.audit-group {
+  margin-top: 8px;
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.audit-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.audit-row:hover { background: var(--surface-3); }
+.audit-cell { flex: none; font-variant-numeric: tabular-nums; color: var(--fg); }
+.audit-detail { color: var(--fg-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Terrains panel: one row per terrain with count, share, and a proportional bar. */
+.stat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 5px 10px;
+  align-items: center;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stat-row:hover:not(:disabled) { background: var(--surface-3); }
+.stat-row--empty { color: var(--fg-subtle); cursor: default; }
+.stat-row--empty .swatch-chip { opacity: 0.45; }
+
+.stat-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-count {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stat-bar {
+  grid-column: 2 / -1;
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.stat-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+}
+
+/* A terrain chip grid directly under a segmented control (fill's custom set). */
+.segmented + .terrain-filter-group { margin-top: 8px; }
+
+/* Labelled sliders (brush size, hardness): a fixed-width caption ahead of the track. */
+.slider-row--labeled { margin-top: 10px; }
+.slider-label { flex: none; width: 62px; color: var(--fg-muted); font-size: 13px; }
+.slider-row--labeled .slider-value { width: 58px; }
 
 .toggle-row {
   display: flex;

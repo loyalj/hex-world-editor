@@ -41,6 +41,15 @@ describe('wireBrushGroup', () => {
 });
 
 describe('buildChipRow', () => {
+  it('paints the chip with a preview image when given one', () => {
+    const row = buildChipRow('x', 'X', 0x123456, false, () => {}, 'data:image/png;base64,QUJD');
+    const chip = row.querySelector<HTMLElement>('.swatch-chip')!;
+    expect(chip.style.backgroundImage).toContain('data:image/png;base64,QUJD');
+    expect(chip.style.backgroundSize).toBe('cover');
+    const plain = buildChipRow('y', 'Y', 0x123456, false, () => {});
+    expect(plain.querySelector<HTMLElement>('.swatch-chip')!.style.backgroundImage).not.toContain('data:');
+  });
+
   it('builds a labelled colour chip that fires on click', () => {
     const onPick = vi.fn();
     const row = buildChipRow('red', 'Kelmar', 0xdd4433, true, onPick);

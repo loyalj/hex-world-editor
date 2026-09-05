@@ -38,6 +38,9 @@ export function makeScene(width = 12, height = 12) {
     chunks: { markDirty() {}, markDirtyCells() {} },
     hoveredCell: null as { col: number; row: number } | null,
     brushRadius: 0,
+    brushFootprint: null as unknown,
+    revision: 0,
+    bumpRevision() { s.revision++; },
     hoverMaskFeedback: true,
     isWater: (t: number) => t === WATER,
     terrainLookup: new Map<number, TerrainDefinition>(),
@@ -98,7 +101,9 @@ export function makeCtx(s: FakeScene): { ctx: ToolContext; edits: MapEdit[]; set
   let settingsChanges = 0;
   const ctx: ToolContext = {
     scene: s as unknown as SceneApi,
-    commitEdit(edit) { if (!edit.isEmpty) edits.push(edit); },
+    // The app bumps the scene revision from history.onChange; the fake does
+    // it here, the moment an edit lands.
+    commitEdit(edit) { if (!edit.isEmpty) { edits.push(edit); s.bumpRevision(); } },
     minimapInvalidate() {},
     syncBrushRadius() {},
     updateCursor() {},

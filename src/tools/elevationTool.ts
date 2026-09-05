@@ -1,12 +1,19 @@
-import { hexRange, hexToOffset, offsetNeighbor, offsetToHex } from '@loyalj/hex-world';
+import { hexToOffset, offsetNeighbor, offsetToHex } from '@loyalj/hex-world';
 import type { HexCoord } from '@loyalj/hex-world';
-import { EDGE_DIRS, hexLineDraw } from './hexPath.ts';
-import { wireBrushGroup, wireOptionGroup } from '../ui/uiHelpers.ts';
+import { EDGE_DIRS, floodRegion, hexLineDraw } from './hexPath.ts';
+import { wireOptionGroup } from '../ui/uiHelpers.ts';
+import { wireBrushControls } from '../ui/brushControls.ts';
+import type { BrushControls } from '../ui/brushControls.ts';
+import { BRUSH_SHAPE_LABELS, brushFootprint, brushReach, expectedCells, solidCells } from './brushFootprint.ts';
+import type { WeightedCell } from './brushFootprint.ts';
 import { BrushTool } from './brushTool.ts';
-import { brushCells } from './tool.ts';
 import type { CellPos, ToolContext, ToolId } from './tool.ts';
 
 type ElevMode = 'raise-lower' | 'smooth' | 'flatten' | 'noise' | 'set-absolute' | 'slope' | 'erosion';
+/** Whether an op lands under the brush or over a filled region. */
+type ElevScope = 'brush' | 'fill';
+/** What a fill click counts as "the same ground". */
+type ElevFillMatch = 'elevation' | 'terrain';
 
 const ELEV_MODE_LABELS: Record<ElevMode, string> = {
   'raise-lower':  'raise / lower',
@@ -19,10 +26,14 @@ const ELEV_MODE_LABELS: Record<ElevMode, string> = {
 };
 
 /**
- * Elevation editing in seven modes. Five are brush stamps (raise/lower,
- * smooth, flatten, noise, set absolute); slope is a drag that ramps a line
- * between its endpoints; erosion is a per-click multi-pass slump. Ctrl held at
- * stroke start snaps the brush to cells at the starting contour.
+ * Elevation editing in seven modes. Five are stamps (raise/lower, smooth,
+ * flatten, noise, set absolute); slope is a drag that ramps a line between
+ * its endpoints; erosion is a per-click multi-pass slump. Every mode but
+ * slope applies either under the brush — solid, ring, or spray at any radius,
+ * with a soft rim — or, in fill scope, across a region matching the clicked
+ * cell's elevation (within a tolerance) or terrain, contiguous or map-wide,
+ * with a hover preview of the region. Ctrl held at stroke start snaps the
+ * brush to cells at the starting contour.
  */
 export class ElevationTool extends BrushTool {
   readonly id: ToolId = 'elevation';
@@ -31,12 +42,13 @@ export class ElevationTool extends BrushTool {
   readonly hasEyedropper = true;
 
   private mode: ElevMode = 'raise-lower';
+  private scope: ElevScope = 'brush';
   private step = 1;
   private flattenTarget = 0;
   private setTarget = 0;
   private rangeMin = -128;
   private rangeMax = 127;
-  private radius = 0;
+  private readonly brush: BrushControls;
   private contourSnapHeld = false;
   private contourLevel: number | null = null;
   private readonly modeBtns: NodeListOf<HTMLButtonElement>;
@@ -46,31 +58,75 @@ export class ElevationTool extends BrushTool {
   private pathStart: CellPos | null = null;
   private currentPath: HexCoord[] | null = null;
 
+  // Fill scope: the match and the hover preview, the terrain fill's mechanic.
+  private fillMatch: ElevFillMatch = 'elevation';
+  private fillTolerance = 0;
+  private fillContiguous = true;
+  private fillHover: CellPos | null = null;
+  private fillHoverCount = 0;
+
   constructor(ctx: ToolContext) {
     super(ctx);
-    wireBrushGroup('elev-brush-group', r => {
-      this.radius = r;
-      ctx.syncBrushRadius();
-    });
+    this.brush = wireBrushControls('elev', () => ctx.syncBrushRadius());
     wireOptionGroup('#elev-step-group .brush-btn', btn => {
       this.step = parseInt(btn.dataset['step']!, 10);
+      this.refreshFillPreview();
     });
     this.modeBtns = wireOptionGroup('#elev-mode-group .density-btn', btn => {
       if (this.mode === 'slope') this.cancelSlope();
       this.mode = btn.dataset['elevMode'] as ElevMode;
       this.updateStepVisibility();
+      this.refreshFillPreview();
+      ctx.syncBrushRadius();
+    });
+
+    const brushHeader = document.getElementById('elev-brush-header') as HTMLElement;
+    const brushGroup  = document.getElementById('elev-brush-group')  as HTMLElement;
+    const fillGroup   = document.getElementById('elev-fill-group')   as HTMLElement;
+    const slopeBtn    = this.panel.querySelector<HTMLButtonElement>('[data-elev-mode="slope"]')!;
+    wireOptionGroup('#elev-scope-group .scatter-type-btn', btn => {
+      this.scope = btn.dataset['elevScope'] as ElevScope;
+      const fill = this.scope === 'fill';
+      brushHeader.classList.toggle('hidden', fill);
+      brushGroup.classList.toggle('hidden', fill);
+      fillGroup.classList.toggle('hidden', !fill);
+      // A slope is a drag between two points — there's no region to fill it
+      // over. Fill scope parks it, and the mode falls back to raise/lower.
+      slopeBtn.disabled = fill;
+      if (fill && this.mode === 'slope') this.setMode('raise-lower');
+      this.refreshFillPreview();
+      ctx.syncBrushRadius();
+      ctx.updateCursor();
+    });
+
+    const toleranceRow = document.getElementById('elev-fill-tolerance-row') as HTMLElement;
+    wireOptionGroup('#elev-fill-match-group .scatter-type-btn', btn => {
+      this.fillMatch = btn.dataset['fillMatch'] as ElevFillMatch;
+      toleranceRow.classList.toggle('hidden', this.fillMatch !== 'elevation');
+      this.refreshFillPreview();
+    });
+    (document.getElementById('elev-fill-tolerance') as HTMLInputElement).addEventListener('input', e => {
+      this.fillTolerance = Math.max(0, parseInt((e.target as HTMLInputElement).value, 10) || 0);
+      this.refreshFillPreview();
+    });
+    (document.getElementById('elev-fill-contiguous') as HTMLInputElement).addEventListener('change', e => {
+      this.fillContiguous = (e.target as HTMLInputElement).checked;
+      this.refreshFillPreview();
     });
 
     (document.getElementById('elev-set-target') as HTMLInputElement).addEventListener('input', e => {
       this.setTarget = Math.max(-128, Math.min(127, parseInt((e.target as HTMLInputElement).value, 10) || 0));
+      this.refreshFillPreview();
     });
     (document.getElementById('elev-range-min') as HTMLInputElement).addEventListener('input', e => {
       this.rangeMin = Math.max(-128, Math.min(127, parseInt((e.target as HTMLInputElement).value, 10)));
       if (this.rangeMin > this.rangeMax) this.rangeMax = this.rangeMin;
+      this.refreshFillPreview();
     });
     (document.getElementById('elev-range-max') as HTMLInputElement).addEventListener('input', e => {
       this.rangeMax = Math.max(-128, Math.min(127, parseInt((e.target as HTMLInputElement).value, 10)));
       if (this.rangeMax < this.rangeMin) this.rangeMin = this.rangeMax;
+      this.refreshFillPreview();
     });
 
     // Raw window listeners rather than the manager's guarded routing: the snap
@@ -83,6 +139,13 @@ export class ElevationTool extends BrushTool {
     });
   }
 
+  /** Switch the op programmatically (eyedropper, fill parking slope) and sweep the buttons. */
+  private setMode(mode: ElevMode): void {
+    this.mode = mode;
+    this.modeBtns.forEach(b => b.classList.toggle('active', b.dataset['elevMode'] === mode));
+    this.updateStepVisibility();
+  }
+
   private updateStepVisibility(): void {
     const isRaiseLower = this.mode === 'raise-lower';
     const isSetAbs     = this.mode === 'set-absolute';
@@ -91,11 +154,32 @@ export class ElevationTool extends BrushTool {
     document.getElementById('elev-set-target-row')!.classList.toggle('hidden', !isSetAbs);
   }
 
-  override brushRadius(): number { return this.radius; }
+  /** The brush radius in cells; the size slider and bracket keys write it. */
+  get radius(): number { return this.brush.settings.radius; }
+  setRadius(radius: number): void { this.brush.setRadius(radius); }
+
+  /** Only a brush-scope stamp has a footprint; fills and slopes target one cell. */
+  private get stamps(): boolean { return this.scope === 'brush' && this.mode !== 'slope'; }
+
+  override brushRadius(): number { return this.stamps ? this.radius : 0; }
+  wantsFillCursor(): boolean { return this.scope === 'fill'; }
+
+  /** The hover outline follows the shape: a ring shows only its band. */
+  hoverFootprint(cell: CellPos): CellPos[] {
+    return this.stamps ? brushReach(cell, this.brush.settings) : [cell];
+  }
+
+  protected override footprint(cell: CellPos): WeightedCell[] {
+    return brushFootprint(cell, this.brush.settings);
+  }
 
   override pointerDown(cell: CellPos, e: PointerEvent): void {
     if (e.altKey && this.mode !== 'slope' && this.mode !== 'erosion') {
       this.eyedrop(cell, e);
+      return;
+    }
+    if (this.scope === 'fill') {
+      this.fillApply(cell);
       return;
     }
     if (this.mode === 'slope') {
@@ -106,7 +190,7 @@ export class ElevationTool extends BrushTool {
       return;
     }
     if (this.mode === 'erosion') {
-      this.applyErosion(cell);
+      this.applyErosion(this.inBounds(brushReach(cell, this.brush.settings)));
       return;
     }
     super.pointerDown(cell, e);
@@ -119,11 +203,8 @@ export class ElevationTool extends BrushTool {
     this.setTarget = sampled;
     this.flattenTarget = sampled;
     (document.getElementById('elev-set-target') as HTMLInputElement).value = String(sampled);
-    if (this.mode !== 'set-absolute' && this.mode !== 'flatten') {
-      this.mode = 'set-absolute';
-      this.modeBtns.forEach(b => b.classList.toggle('active', b.dataset['elevMode'] === 'set-absolute'));
-      this.updateStepVisibility();
-    }
+    if (this.mode !== 'set-absolute' && this.mode !== 'flatten') this.setMode('set-absolute');
+    this.refreshFillPreview();
   }
 
   protected override beginStroke(cell: CellPos): void {
@@ -132,10 +213,13 @@ export class ElevationTool extends BrushTool {
     if (this.contourSnapHeld)    this.contourLevel  = map.getElevation(cell.col, cell.row);
   }
 
-  protected applyCell(col: number, row: number): void {
-    const { map, chunks } = this.ctx.scene;
-    const prev = map.getElevation(col, row);
-    if (this.contourLevel !== null && prev !== this.contourLevel) return;
+  /**
+   * The op's result for one cell, clamped to the range lock. Noise is a
+   * random step; the preview asks with `forPreview` and gets a value that is
+   * simply "different", so the count promises every cell the noise touches.
+   */
+  private nextElevation(col: number, row: number, prev: number, forPreview = false): number {
+    const { map } = this.ctx.scene;
     let next: number;
     if (this.mode === 'raise-lower') {
       next = prev + this.step;
@@ -154,9 +238,16 @@ export class ElevationTool extends BrushTool {
     } else if (this.mode === 'set-absolute') {
       next = this.setTarget;
     } else {
-      next = prev + Math.floor(Math.random() * 5) - 2; // noise
+      next = forPreview ? prev + 1 : prev + Math.floor(Math.random() * 5) - 2; // noise
     }
-    next = Math.max(this.rangeMin, Math.min(this.rangeMax, next));
+    return Math.max(this.rangeMin, Math.min(this.rangeMax, next));
+  }
+
+  protected applyCell(col: number, row: number): void {
+    const { map, chunks } = this.ctx.scene;
+    const prev = map.getElevation(col, row);
+    if (this.contourLevel !== null && prev !== this.contourLevel) return;
+    const next = this.nextElevation(col, row, prev);
     if (next === prev) return;
     (this.tx ??= map.beginEdit()).setElevation(col, row, next);
     chunks.markDirty(col, row);
@@ -166,6 +257,10 @@ export class ElevationTool extends BrushTool {
   }
 
   override pointerMove(cell: CellPos | null, e: PointerEvent): void {
+    if (this.scope === 'fill') {
+      if (!this.down) this.updateFillPreview(cell);
+      return;
+    }
     if (this.mode === 'slope') {
       if (!this.slopeDown || !this.pathStart) return;
       const end = cell ?? this.pathStart;
@@ -180,7 +275,7 @@ export class ElevationTool extends BrushTool {
   }
 
   override pointerUp(): void {
-    if (this.mode === 'slope') {
+    if (this.mode === 'slope' && this.scope === 'brush') {
       if (!this.slopeDown) return;
       this.commitSlope();
       return;
@@ -188,6 +283,102 @@ export class ElevationTool extends BrushTool {
     super.pointerUp();
     this.contourLevel = null;
   }
+
+  // ---- Fill scope ----
+
+  /**
+   * The region a fill click at this cell would cover: cells within the
+   * tolerance of its elevation, or sharing its terrain, connected to it or
+   * map-wide. Mask and locks are walls, as for the terrain fill: a protected
+   * start yields nothing and the flood never crosses them.
+   */
+  private fillRegion(startCol: number, startRow: number): CellPos[] {
+    const scene = this.ctx.scene;
+    const { map } = scene;
+    if (!scene.editable(startCol, startRow)) return [];
+    let matches: (col: number, row: number) => boolean;
+    if (this.fillMatch === 'terrain') {
+      const terrain = map.getTerrain(startCol, startRow);
+      matches = (col, row) => map.getTerrain(col, row) === terrain;
+    } else {
+      const elev = map.getElevation(startCol, startRow);
+      const tolerance = this.fillTolerance;
+      matches = (col, row) => Math.abs(map.getElevation(col, row) - elev) <= tolerance;
+    }
+    if (this.fillContiguous) {
+      return floodRegion(map.width, map.height, startCol, startRow,
+        (col, row) => matches(col, row) && scene.editable(col, row));
+    }
+    const cells: CellPos[] = [];
+    for (let row = 0; row < map.height; row++) {
+      for (let col = 0; col < map.width; col++) {
+        if (matches(col, row) && scene.editable(col, row)) cells.push({ col, row });
+      }
+    }
+    return cells;
+  }
+
+  /** How many region cells the op would actually move — the range lock and no-op ops drop out. */
+  private wouldChange(region: CellPos[], start: CellPos): number {
+    const { map } = this.ctx.scene;
+    if (this.mode === 'erosion') return region.length;
+    // Flatten levels the region to the clicked cell, as a brush stroke does to its first cell.
+    const flattenTarget = this.flattenTarget;
+    if (this.mode === 'flatten') this.flattenTarget = map.getElevation(start.col, start.row);
+    let n = 0;
+    for (const { col, row } of region) {
+      const prev = map.getElevation(col, row);
+      if (this.nextElevation(col, row, prev, true) !== prev) n++;
+    }
+    this.flattenTarget = flattenTarget;
+    return n;
+  }
+
+  /** Apply the current op across the region under a click, as one undo step. */
+  private fillApply(cell: CellPos): void {
+    const region = this.fillRegion(cell.col, cell.row);
+    if (region.length > 0) {
+      if (this.mode === 'erosion') {
+        this.applyErosion(region);
+      } else {
+        this.beginStroke(cell);
+        for (const { col, row } of region) this.applyCell(col, row);
+        if (this.tx) this.ctx.commitEdit(this.tx.commit());
+        this.tx = null;
+        this.flushGameplay();
+        this.contourLevel = null;
+      }
+    }
+    // The region just moved — the preview is stale until the pointer moves again.
+    this.clearFillPreview();
+  }
+
+  private updateFillPreview(cell: CellPos | null): void {
+    if (!cell) {
+      this.clearFillPreview();
+      return;
+    }
+    if (this.fillHover && this.fillHover.col === cell.col && this.fillHover.row === cell.row) return;
+    const region = this.fillRegion(cell.col, cell.row);
+    this.fillHover = cell;
+    this.fillHoverCount = this.wouldChange(region, cell);
+    this.ctx.scene.setSelectionPreview(region);
+  }
+
+  /** An option changed — rebuild the preview under the cursor, or hide it. */
+  private refreshFillPreview(): void {
+    this.clearFillPreview();
+    if (this.scope === 'fill') this.updateFillPreview(this.ctx.scene.hoveredCell);
+  }
+
+  private clearFillPreview(): void {
+    if (!this.fillHover) return;
+    this.fillHover = null;
+    this.fillHoverCount = 0;
+    this.ctx.scene.setSelectionPreview(null);
+  }
+
+  // ---- Slope ----
 
   /** Ramp every cell on the dragged line between its endpoint elevations. */
   private commitSlope(): void {
@@ -224,16 +415,20 @@ export class ElevationTool extends BrushTool {
     this.contourLevel = null;
   }
 
-  /**
-   * A few passes of "any cell with a lower neighbour slumps by one" across the
-   * brush footprint — carves talus off peaks without touching the basins.
-   */
-  private applyErosion(cell: CellPos): void {
-    const { map, chunks } = this.ctx.scene;
-    const cells = hexRange(offsetToHex(cell.col, cell.row), this.radius)
-      .map(h => hexToOffset(h))
-      .filter(o => o.col >= 0 && o.col < map.width && o.row >= 0 && o.row < map.height);
+  // ---- Erosion ----
 
+  private inBounds(cells: CellPos[]): CellPos[] {
+    const { map } = this.ctx.scene;
+    return cells.filter(o => o.col >= 0 && o.col < map.width && o.row >= 0 && o.row < map.height);
+  }
+
+  /**
+   * A few passes of "any cell with a lower neighbour slumps by one" across
+   * the given cells — the brush footprint, or a filled region — carving
+   * talus off peaks without touching the basins.
+   */
+  private applyErosion(cells: CellPos[]): void {
+    const { map, chunks } = this.ctx.scene;
     const working = new Map<number, number>();
     for (const { col, row } of cells) working.set(this.cellKey(col, row), map.getElevation(col, row));
     const prevMap = new Map(working);
@@ -273,17 +468,28 @@ export class ElevationTool extends BrushTool {
       this.cancelSlope();
       return true;
     }
-    return false;
+    return this.stamps && this.brush.keyDown(e);
   }
 
   override deactivate(): void {
     this.cancelSlope();
     super.deactivate();
+    this.clearFillPreview();
   }
 
   statusText(): string {
     const mode = ELEV_MODE_LABELS[this.mode];
     const step = this.mode === 'raise-lower' ? ` ${this.step > 0 ? '+' : ''}${this.step}` : '';
-    return `Elevation · ${mode}${step} · brush ${brushCells(this.radius)}`;
+    if (this.scope === 'fill') {
+      const scope = this.fillContiguous ? 'fill' : 'fill all';
+      const match = this.fillMatch === 'terrain' ? ' · same terrain' : this.fillTolerance > 0 ? ` · ±${this.fillTolerance}` : '';
+      const would = this.fillHoverCount > 0 ? ` · would change ${this.fillHoverCount}` : '';
+      return `Elevation · ${mode}${step} · ${scope}${match}${would}`;
+    }
+    if (this.mode === 'slope') return `Elevation · ${mode}`;
+    const { settings } = this.brush;
+    const n = expectedCells(settings);
+    const count = settings.shape === 'spray' ? `~${n} of ${solidCells(settings.radius)}` : String(n);
+    return `Elevation · ${mode}${step} · ${BRUSH_SHAPE_LABELS[settings.shape]} ${count}`;
   }
 }

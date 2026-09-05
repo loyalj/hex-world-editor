@@ -1,4 +1,4 @@
-import { FbmPlugin, ChunkPlugin } from '@loyalj/hex-world';
+import { FbmPlugin, ChunkPlugin, hexToWorld, offsetToHex } from '@loyalj/hex-world';
 import type { MapEdit } from '@loyalj/hex-world';
 import { HeightmapPlugin } from './generators/heightmapPlugin.ts';
 import { initScene, FEATURE_LAYERS } from './scene.ts';
@@ -9,6 +9,8 @@ import { initWizard } from './wizard/wizard.ts';
 import { hydrateInfoTips } from './ui/infoTips.ts';
 import { initPalette, EDITOR_DEFAULT_TERRAINS } from './ui/palette.ts';
 import { initLocksPanel } from './ui/locksPanel.ts';
+import { initTerrainStatsPanel } from './ui/terrainStatsPanel.ts';
+import { initRiverAudit } from './ui/riverAudit.ts';
 import { initRosters } from './ui/rosters.ts';
 import { initPersistence } from './ui/persistence.ts';
 import { initMenus } from './ui/menus.ts';
@@ -119,23 +121,33 @@ const toolManager = initToolManager(
 // own init, and the menus (which own panel visibility) come later still.
 let refreshLocksUi = (): void => {};
 let showLocksPanel = (): void => {};
+let refreshTerrainStats = (): void => {};
 
 const palette = initPalette({
   scene, terrainTool, scatterTool,
   minimapInvalidate: () => minimap.invalidate(),
-  onTerrainsChanged: () => refreshLocksUi(),
+  onTerrainsChanged: () => { refreshLocksUi(); refreshTerrainStats(); },
 });
 
 const locksPanel = initLocksPanel({
   scene,
   terrains: () => palette.terrains,
+  previewFor: index => palette.previewFor(index),
   showPanel: () => showLocksPanel(),
 });
 refreshLocksUi = () => locksPanel.refresh();
+
+const terrainStats = initTerrainStatsPanel({
+  scene,
+  terrains: () => palette.terrains,
+  previewFor: index => palette.previewFor(index),
+});
+refreshTerrainStats = () => terrainStats.refresh();
 // Locks are saved-file state outside the undo history, like fog exploration —
 // a change marks the document unsaved and schedules the autosave.
 scene.locks.onChange = () => {
   locksPanel.refresh();
+  scene.bumpRevision();
   ctx.noteSettingsChanged();
 };
 
@@ -145,6 +157,16 @@ const rosters = initRosters({
   ctx, territoryTool, resourceTool, unitTool,
   terrains: () => palette.terrains,
 });
+// The river check dialog: its rows fly the camera to the offending cell.
+const riverAudit = initRiverAudit({
+  scene,
+  focusCell: cell => {
+    const p = hexToWorld(scene.layout, offsetToHex(cell.col, cell.row));
+    scene.focusWorld(p.x, p.z);
+  },
+});
+document.getElementById('river-audit-btn')!.addEventListener('click', () => riverAudit.open());
+
 hydrateInfoTips();
 
 const persistence = initPersistence({
@@ -172,7 +194,12 @@ document.getElementById('add-terrain-confirm-btn')!
 document.getElementById('liquid-apply-btn')!
   .addEventListener('click', () => persistence.noteSettingsChanged());
 
-const menus = initMenus({ scene, minimapInvalidate: () => minimap.invalidate() });
+const menus = initMenus({
+  scene,
+  minimapInvalidate: () => minimap.invalidate(),
+  // The Terrains panel skips its recount while hidden; showing it catches up.
+  onPanelToggle: (panel, visible) => { if (panel === 'terrains' && visible) terrainStats.refresh(); },
+});
 showLocksPanel = () => menus.setPanelVisible('locks', true);
 
 initReadouts({ scene, minimap, tools: toolManager, terrainTool, environmentTool, terrains: () => palette.terrains });
@@ -184,6 +211,10 @@ initReadouts({ scene, minimap, tools: toolManager, terrainTool, environmentTool,
 history.onChange = () => {
   undoBtn.disabled = !history.canUndo;
   redoBtn.disabled = !history.canRedo;
+  // Anything caching a view of the map (the fill preview's component index,
+  // the Terrains panel) re-derives from here.
+  scene.bumpRevision();
+  terrainStats.refresh();
   // Refreshes the doc strip (dirty asterisk) and schedules the autosave.
   persistence.noteMapChanged();
   minimap.invalidate();

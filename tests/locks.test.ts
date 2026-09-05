@@ -11,7 +11,7 @@ import { initLocksPanel } from '../src/ui/locksPanel.ts';
 import { EDITOR_DEFAULT_TERRAINS } from '../src/ui/palette.ts';
 import { UNIT_KEY, unitAt } from '../src/unitTypes.ts';
 import type { SceneApi } from '../src/scene.ts';
-import { clickOption, countCells, loadEditorDom, makeCtx, makeScene, pev } from './helpers.ts';
+import { clickOption, countCells, loadEditorDom, makeCtx, makeScene, pev, setInput } from './helpers.ts';
 import type { FakeScene } from './helpers.ts';
 
 describe('LockModel', () => {
@@ -61,7 +61,7 @@ describe('lock enforcement across tools', () => {
     const tool = new TerrainTool(ctx);
     s.map.setTerrain(5, 5, 2); // the footprint's centre is protected
     s.locks.setLocked(2, true);
-    clickOption('#terrain-brush-group .brush-btn[data-brush="1"]'); // 7 cells
+    setInput('terrain-brush-size', '1'); // 7 cells
     tool.paintTerrain = 1;
     tool.pointerDown({ col: 5, row: 5 }, pev());
     tool.pointerUp();

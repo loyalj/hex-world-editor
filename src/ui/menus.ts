@@ -4,10 +4,12 @@ import { loadUiPref, storeUiPref } from './uiPrefs.ts';
 export interface MenusOptions {
   scene: SceneApi;
   minimapInvalidate(): void;
+  /** A chrome panel was shown or hidden — panels that skip work while hidden catch up here. */
+  onPanelToggle?(panel: PanelId, visible: boolean): void;
 }
 
 /** The chrome panels View ▸ Panels shows and hides. */
-export type PanelId = 'drawer' | 'minimap' | 'inspector' | 'locks';
+export type PanelId = 'drawer' | 'minimap' | 'inspector' | 'locks' | 'terrains';
 
 export interface MenusApi {
   /** Show or hide a chrome panel, syncing its menu check and stored pref. */
@@ -92,6 +94,12 @@ export function initMenus(opts: MenusOptions): MenusApi {
       btn:   document.getElementById('toggle-locks-btn')!,
       def:   false,
     },
+    terrains: {
+      el:    document.getElementById('terrains-panel')!,
+      check: document.getElementById('terrains-check')!,
+      btn:   document.getElementById('toggle-terrains-btn')!,
+      def:   false,
+    },
   };
   const panelOpen = {} as Record<PanelId, boolean>;
 
@@ -103,7 +111,8 @@ export function initMenus(opts: MenusOptions): MenusApi {
     storeUiPref(`panel:${id}`, visible);
     // With every right-column panel off, the empty column gives its width back.
     rightPanel.classList.toggle('hidden',
-      !panelOpen.minimap && !panelOpen.inspector && !panelOpen.locks);
+      !panelOpen.minimap && !panelOpen.inspector && !panelOpen.locks && !panelOpen.terrains);
+    opts.onPanelToggle?.(id, visible);
   }
 
   for (const id of Object.keys(PANELS) as PanelId[]) {
@@ -126,6 +135,8 @@ export function initMenus(opts: MenusOptions): MenusApi {
   wireToggle('toggle-grid-btn',     'grid-check',     false, on => scene.setHexGrid(on));
   wireToggle('toggle-heatmap-btn',  'heatmap-check',  false, on => scene.setElevationHeatmap(on));
   wireToggle('toggle-contours-btn', 'contours-check', false, on => scene.setContourLines(on));
+  wireToggle('toggle-riverflow-btn', 'riverflow-check', false, on => scene.setRiverFlowOverlay(on));
+  wireToggle('toggle-basins-btn',    'basins-check',    false, on => scene.setDrainageBasins(on));
   wireToggle('toggle-shadows-btn', 'shadows-check', true,  on => scene.setShadows(on));
   wireToggle('toggle-sky-btn',     'sky-check',     true,  on => scene.setSky(on));
   wireToggle('toggle-godrays-btn', 'godrays-check', true,  on => scene.setGodRays(on));

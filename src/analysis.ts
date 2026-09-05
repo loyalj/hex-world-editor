@@ -112,3 +112,32 @@ export function contourThresholds(range: Range, maxLines = 12): number[] {
   }
   return []; // unreachable — the last interval always returns
 }
+
+/** River flow tints — a pale headwater blue deepening to a saturated main stem. */
+export const FLOW_RAMP: Ramp = [
+  [0.0, 0xa9dcf5],
+  [0.5, 0x3d8fd6],
+  [1.0, 0x0b3f8a],
+];
+
+/**
+ * Tint for a river cell by accumulated flow. Log-scaled: flow grows by whole
+ * tributaries, so a linear ramp would leave every stream but the trunk pale.
+ */
+export function riverFlowColor(flow: number, maxFlow: number): number {
+  if (maxFlow <= 1) return rampColor(FLOW_RAMP, 1);
+  return rampColor(FLOW_RAMP, Math.log(Math.max(1, flow)) / Math.log(maxFlow));
+}
+
+/** A distinct hue per drainage basin: the golden angle keeps neighbours apart. */
+export function basinColor(index: number): number {
+  const h = (index * 137.508) % 360;
+  return hslToRgb(h / 360, 0.65, 0.55);
+}
+
+function hslToRgb(h: number, s: number, l: number): number {
+  const k = (n: number): number => (n + h * 12) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number): number => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return (Math.round(f(0) * 255) << 16) | (Math.round(f(8) * 255) << 8) | Math.round(f(4) * 255);
+}

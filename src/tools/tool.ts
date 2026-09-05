@@ -59,6 +59,11 @@ export interface Tool {
 
   /** Hover-footprint radius (0 = single cell). */
   brushRadius(): number;
+  /**
+   * The exact hover footprint for tools whose stamp isn't the filled hex of
+   * {@link brushRadius} (rings, sprays). Absent, the scene draws the hex.
+   */
+  hoverFootprint?(cell: CellPos): CellPos[];
   /** Reset transient state (previews, part-done gestures) when switched away. */
   deactivate(): void;
 

@@ -27,11 +27,27 @@ shape and climate options.
 
 **Terrain & terrain editing**
 - Terrain brush and flood fill, both with a hover preview of exactly what a
-  fill click would change, and an Alt+click eyedropper.
+  fill click would change, and an Alt+click eyedropper. The brush comes in
+  solid, ring, and spray shapes at any radius up to 12 (`[` / `]` resize it),
+  with a hardness slider that softens a solid brush's rim and a density slider
+  for the spray. The fill can match the clicked terrain exactly, its whole
+  category (any solid or any liquid), a custom set of terrains, or the
+  clicked cell's elevation within a tolerance, and can run over the
+  connected region or the whole map. Shift+click stamps a
+  straight line from where the last stroke ended, and the status strip
+  reports how many cells a click would actually change.
 - Elevation sculpting: raise/lower, smooth, flatten, noise, set-absolute,
-  slope ramps, and erosion, with a range lock and contour snapping.
+  slope ramps, and erosion, with a range lock and contour snapping. The same
+  shaped, sized brush as the terrain tool, or a fill scope that applies the
+  mode across a region matching the clicked cell's elevation (within a
+  tolerance) or terrain, connected or map-wide, with a hover preview.
 - Rivers and roads with pathfinding, straight, waypoint, and freehand modes;
-  rivers can trace downhill, roads can weigh terrain and elevation costs.
+  rivers can trace downhill with a hover preview, leave a lake wherever a
+  drawn or traced river ends on land, reverse a stem's flow, and be erased
+  cell by cell or a whole river at once. Alt+click selects a whole river system; a River Check
+  dialog lists uphill runs, loops, dead ends, dangling edges, and low
+  sources and jumps the camera to each. Roads can weigh terrain and
+  elevation costs.
 - Scatter layers (pines, broadleaf, bushes, rocks) painted by density with
   elevation and terrain filters.
 - Custom rosters: define your own terrain types, liquids (with flow, waves,
@@ -52,9 +68,12 @@ with gusts that sway the vegetation, seasons (continental or whole-map) with
 snow accumulation and freezing liquids, god rays, and cloud shadows.
 
 **Editor chrome** — undo/redo history, minimap with viewport tracking, cell
-inspector, map analysis overlays (elevation heatmap, contour lines), RTS and
-free cameras, and an app-wide settings dialog with themable UI: six presets
-plus adjustable accent color, dark/light base, and corner radius.
+inspector (with river flow, tributaries, and destination), a Terrains panel
+with per-terrain cell counts (click a row to select every cell of that
+terrain), map analysis overlays (elevation heatmap, contour lines, river
+flow, drainage basins), RTS and free cameras, and an app-wide settings dialog with
+themable UI: six presets plus adjustable accent color, dark/light base, and
+corner radius.
 
 ## Keyboard shortcuts
 
@@ -65,7 +84,9 @@ plus adjustable accent color, dark/light base, and corner radius.
 | `Ctrl+N` / `Ctrl+O` | New map wizard / open |
 | `Ctrl+S` / `Ctrl+Shift+S` | Save / save as |
 | `Ctrl+A` / `Ctrl+I` / `Esc` | Select all / invert selection / clear |
-| `Alt+click` | Eyedropper (terrain, scatter density) |
+| `Alt+click` | Eyedropper (terrain, scatter density); select a whole river (river tool) |
+| `Shift+click` | Straight line from the last stroke's end (brush tools) |
+| `[` / `]` | Shrink / grow the terrain brush (Shift steps by 5) |
 | `Shift+drag` | Erase (rivers, roads) |
 
 ## File formats
