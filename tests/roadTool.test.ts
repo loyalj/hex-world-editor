@@ -224,3 +224,41 @@ describe('RoadTool single-edge mode', () => {
     expect(edits.length).toBe(0);
   });
 });
+
+describe('RoadTool network selection', () => {
+  beforeEach(() => {
+    clickOption('#road-mode-group .brush-btn[data-road-mode="straight"]');
+    drag([2, 4], [6, 4]);
+    drag([1, 8], [3, 8]);
+    edits.length = 0;
+  });
+
+  it('Alt+click selects the whole network; Shift+Alt adds another', () => {
+    tool.pointerDown({ col: 4, row: 4 }, pev({ altKey: true }));
+    tool.pointerUp();
+    expect(s.selection.size).toBe(5);
+    expect(s.selection.has(2, 4)).toBe(true);
+    tool.pointerDown({ col: 2, row: 8 }, pev({ altKey: true, shiftKey: true }));
+    tool.pointerUp();
+    expect(s.selection.size).toBe(8);
+    expect(edits.length).toBe(0); // selection only, no map edit
+  });
+
+  it('Alt hover previews the network and the status says how many cells', () => {
+    tool.pointerMove({ col: 4, row: 4 }, pev({ altKey: true }));
+    expect(s.selectionPreviews.at(-1)).toHaveLength(5);
+    expect(tool.statusText()).toContain('selects 5 road cells');
+    tool.pointerMove({ col: 4, row: 4 }, pev());
+    expect(s.selectionPreviews.at(-1)).toBeNull();
+  });
+
+  it('Alt on a bare cell selects nothing and Alt is left to the click modes', () => {
+    tool.pointerDown({ col: 9, row: 9 }, pev({ altKey: true }));
+    tool.pointerUp();
+    expect(s.selection.size).toBe(0);
+    clickOption('#road-mode-group .brush-btn[data-road-mode="waypoint"]');
+    tool.pointerDown({ col: 4, row: 4 }, pev({ altKey: true }));
+    expect(s.selection.size).toBe(0); // a waypoint was placed instead
+    tool.keyDown!(new KeyboardEvent('keydown', { key: 'Escape' }));
+  });
+});

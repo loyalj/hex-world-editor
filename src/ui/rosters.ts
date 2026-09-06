@@ -16,6 +16,10 @@ export interface RostersOptions {
   unitTool: UnitTool;
   /** Live terrain palette, for the allowed-terrain chips in the resource dialog. */
   terrains(): TerrainDescriptor[];
+  /** The faction roster changed — names, colours, or membership. */
+  onFactionsChanged?(): void;
+  /** The resource type roster changed — names, colours, rules, or membership. */
+  onResourcesChanged?(): void;
 }
 
 /**
@@ -95,11 +99,13 @@ export function initRosters(opts: RostersOptions): RostersApi {
     scene.refreshGameplayLayers();
     // Faction tints ride into the minimap through the territory layer.
     ctx.minimapInvalidate();
+    opts.onFactionsChanged?.();
   }
 
   function pushResources(): void {
     scene.setResourceDescriptors(resourceTypes);
     resourceTool.refreshPalette();
+    opts.onResourcesChanged?.();
   }
 
   // ---- Faction dialog ----

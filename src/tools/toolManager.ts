@@ -57,6 +57,7 @@ export function initToolManager(
     ctx.scene.hoverLockFeedback = !(active.ignoresLocks ?? false);
     ctx.syncBrushRadius();
     ctx.updateCursor();
+    active.activate?.();
     onToolChange(active);
   }
 
@@ -82,12 +83,13 @@ export function initToolManager(
   viewport.addEventListener('pointercancel', () => active.pointerUp());
   viewport.addEventListener('dblclick',      () => active.doubleClick?.());
 
-  // In the selection tool a STATIONARY right click acts as Alt+click
-  // (subtract). A right-drag is the camera's rotate gesture, so the click is
-  // resolved at pointer-up by how far the pointer travelled since the press.
+  // A STATIONARY right click reaches tools that handle one (the selection
+  // tool subtracts, territory releases). A right-drag is the camera's rotate
+  // gesture, so the click is resolved at pointer-up by how far the pointer
+  // travelled since the press.
   let rightPress: { x: number; y: number; cell: CellPos | null } | null = null;
   viewport.addEventListener('pointerdown', e => {
-    if (e.button === 2 && active.id === 'select') {
+    if (e.button === 2 && active.rightClick) {
       rightPress = { x: e.clientX, y: e.clientY, cell: ctx.scene.hoveredCell };
     }
   });
@@ -95,12 +97,9 @@ export function initToolManager(
     if (e.button !== 2 || !rightPress) return;
     const press = rightPress;
     rightPress = null;
-    if (active.id !== 'select' || !press.cell) return;
+    if (!active.rightClick || !press.cell) return;
     if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > 4) return;
-    // Synthesised through the normal pointer path so every selection sub-tool
-    // treats it exactly as an Alt+left-click (Shift+right = Shift+Alt).
-    active.pointerDown(press.cell, new PointerEvent('pointerdown', { altKey: true, shiftKey: e.shiftKey }));
-    active.pointerUp();
+    active.rightClick(press.cell, e);
   });
 
   window.addEventListener('keydown', e => {

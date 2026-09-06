@@ -21,8 +21,10 @@ export interface BrushControls {
  * Wire one panel's brush controls. Elements are found by id from a prefix:
  * `${prefix}-shape-group`, `${prefix}-brush-size` (+ `-value`),
  * `${prefix}-hardness-row` / `-hardness` / `-hardness-value`, and
- * `${prefix}-density-row` / `-density` / `-density-value`. `onChange` fires
- * after any change so the tool can resync the hover footprint.
+ * `${prefix}-density-row` / `-density` / `-density-value`. The hardness
+ * trio is optional: a panel without one (the selection brush, where a soft
+ * rim has no meaning) keeps a hard edge. `onChange` fires after any change
+ * so the tool can resync the hover footprint.
  */
 export function wireBrushControls(prefix: string, onChange: () => void): BrushControls {
   const el = <T extends HTMLElement>(suffix: string): T => document.getElementById(`${prefix}-${suffix}`) as T;
@@ -30,9 +32,9 @@ export function wireBrushControls(prefix: string, onChange: () => void): BrushCo
 
   const sizeInput = el<HTMLInputElement>('brush-size');
   const sizeValue = el<HTMLElement>('brush-size-value');
-  const hardnessRow   = el<HTMLElement>('hardness-row');
-  const hardnessInput = el<HTMLInputElement>('hardness');
-  const hardnessValue = el<HTMLElement>('hardness-value');
+  const hardnessRow   = document.getElementById(`${prefix}-hardness-row`) as HTMLElement | null;
+  const hardnessInput = document.getElementById(`${prefix}-hardness`) as HTMLInputElement | null;
+  const hardnessValue = document.getElementById(`${prefix}-hardness-value`) as HTMLElement | null;
   const densityRow   = el<HTMLElement>('density-row');
   const densityInput = el<HTMLInputElement>('density');
   const densityValue = el<HTMLElement>('density-value');
@@ -54,9 +56,9 @@ export function wireBrushControls(prefix: string, onChange: () => void): BrushCo
   sizeInput.max = String(MAX_BRUSH_RADIUS);
   sizeInput.addEventListener('input', () => setRadius(parseInt(sizeInput.value, 10) || 0));
 
-  hardnessInput.addEventListener('input', () => {
+  hardnessInput?.addEventListener('input', () => {
     settings.hardness = (parseInt(hardnessInput.value, 10) || 0) / 100;
-    hardnessValue.textContent = `${Math.round(settings.hardness * 100)}%`;
+    if (hardnessValue) hardnessValue.textContent = `${Math.round(settings.hardness * 100)}%`;
     onChange();
   });
   densityInput.addEventListener('input', () => {
@@ -69,7 +71,7 @@ export function wireBrushControls(prefix: string, onChange: () => void): BrushCo
   wireOptionGroup(`#${prefix}-shape-group .scatter-type-btn`, btn => {
     settings.shape = btn.dataset['brushShape'] as BrushShape;
     // Hardness only shapes a solid rim; density only means something to spray.
-    hardnessRow.classList.toggle('hidden', settings.shape !== 'solid');
+    hardnessRow?.classList.toggle('hidden', settings.shape !== 'solid');
     densityRow.classList.toggle('hidden', settings.shape !== 'spray');
     updateReadout();
     onChange();

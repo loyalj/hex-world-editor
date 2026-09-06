@@ -754,3 +754,59 @@ describe('fill by elevation', () => {
     expect(edits.length).toBe(0);
   });
 });
+
+describe('selection fill match', () => {
+  const fillMode = () => clickOption('#terrain-mode-group .scatter-type-btn[data-terrain-mode="fill"]');
+  const selection = () => clickOption('#terrain-fill-match-group .scatter-type-btn[data-fill-match="selection"]');
+  const painted = (t: number) => countCells(s.map, (c, r) => s.map.getTerrain(c, r) === t);
+
+  it('paints every selected cell whatever it holds, wherever the click lands', () => {
+    s.map.setTerrain(2, 2, 1);
+    s.map.setElevation(3, 2, 7);
+    s.map.setTerrain(4, 2, WATER);
+    s.selection.apply([{ col: 2, row: 2 }, { col: 3, row: 2 }, { col: 4, row: 2 }, { col: 9, row: 9 }], 'replace');
+    tool.paintTerrain = 3;
+    fillMode();
+    selection();
+    // The click is outside the selection; the fill goes to the selection anyway.
+    tool.pointerMove({ col: 0, row: 0 }, pev());
+    expect(s.selectionPreviews.at(-1)).toHaveLength(4);
+    expect(tool.statusText()).toContain('fill · selection · would paint 4');
+    tool.pointerDown({ col: 0, row: 0 }, pev());
+    tool.pointerUp();
+    expect(painted(3)).toBe(4);
+    expect(s.map.getTerrain(9, 9)).toBe(3);
+    expect(s.map.getTerrain(0, 0)).toBe(0);
+    expect(edits.length).toBe(1);
+  });
+
+  it('skips locked cells and cells already painted, and does nothing with no selection', () => {
+    s.map.setTerrain(2, 2, 1);
+    s.map.setTerrain(3, 2, 3);
+    s.locks.setLocked(1, true);
+    s.selection.apply([{ col: 2, row: 2 }, { col: 3, row: 2 }, { col: 4, row: 2 }], 'replace');
+    tool.paintTerrain = 3;
+    fillMode();
+    selection();
+    tool.pointerDown({ col: 4, row: 2 }, pev());
+    tool.pointerUp();
+    expect(s.map.getTerrain(2, 2)).toBe(1);
+    expect(s.map.getTerrain(4, 2)).toBe(3);
+    expect(edits.length).toBe(1);
+    s.selection.clear();
+    tool.pointerDown({ col: 5, row: 5 }, pev());
+    tool.pointerUp();
+    expect(edits.length).toBe(1);
+  });
+
+  it('hides the contiguous and tolerance rows, which do not apply', () => {
+    fillMode();
+    const contiguous = document.getElementById('terrain-fill-contiguous-row')!;
+    expect(contiguous.classList.contains('hidden')).toBe(false);
+    selection();
+    expect(contiguous.classList.contains('hidden')).toBe(true);
+    expect(document.getElementById('terrain-fill-tolerance-row')!.classList.contains('hidden')).toBe(true);
+    clickOption('#terrain-fill-match-group .scatter-type-btn[data-fill-match="exact"]');
+    expect(contiguous.classList.contains('hidden')).toBe(false);
+  });
+});

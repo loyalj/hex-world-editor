@@ -74,32 +74,32 @@ describe('initToolManager', () => {
     expect(a.pointerUp).toHaveBeenCalled();
   });
 
-  it('a stationary right click in the selection tool becomes Alt+click', () => {
-    const a = stub('select', 'selection-options');
+  it('a stationary right click reaches a tool that handles one', () => {
+    const rightClick = vi.fn();
+    const a = stub('select', 'selection-options', { rightClick });
     const viewport = document.getElementById('viewport')!;
     initToolManager(ctx, [a], viewport, () => {});
     s.hoveredCell = { col: 3, row: 4 };
 
     viewport.dispatchEvent(new MouseEvent('pointerdown', { button: 2, clientX: 100, clientY: 100 }));
     viewport.dispatchEvent(new MouseEvent('pointerup',   { button: 2, clientX: 101, clientY: 101 }));
-    expect(a.pointerDown).toHaveBeenCalledWith(
-      { col: 3, row: 4 },
-      expect.objectContaining({ altKey: true }),
-    );
+    expect(rightClick).toHaveBeenCalledWith({ col: 3, row: 4 }, expect.anything());
+    expect(a.pointerDown).not.toHaveBeenCalled();
   });
 
-  it('a right DRAG stays the camera gesture — no subtract', () => {
-    const a = stub('select', 'selection-options');
+  it('a right DRAG stays the camera gesture — no right click', () => {
+    const rightClick = vi.fn();
+    const a = stub('select', 'selection-options', { rightClick });
     const viewport = document.getElementById('viewport')!;
     initToolManager(ctx, [a], viewport, () => {});
     s.hoveredCell = { col: 3, row: 4 };
 
     viewport.dispatchEvent(new MouseEvent('pointerdown', { button: 2, clientX: 100, clientY: 100 }));
     viewport.dispatchEvent(new MouseEvent('pointerup',   { button: 2, clientX: 160, clientY: 100 }));
-    expect(a.pointerDown).not.toHaveBeenCalled();
+    expect(rightClick).not.toHaveBeenCalled();
   });
 
-  it('right click outside the selection tool stays inert', () => {
+  it('right click on a tool without a handler stays inert', () => {
     const a = stub('paint-terrain', 'terrain-options');
     const viewport = document.getElementById('viewport')!;
     initToolManager(ctx, [a], viewport, () => {});
@@ -108,6 +108,16 @@ describe('initToolManager', () => {
     viewport.dispatchEvent(new MouseEvent('pointerdown', { button: 2, clientX: 100, clientY: 100 }));
     viewport.dispatchEvent(new MouseEvent('pointerup',   { button: 2, clientX: 100, clientY: 100 }));
     expect(a.pointerDown).not.toHaveBeenCalled();
+  });
+
+  it('activating a tool calls its activate hook', () => {
+    const activate = vi.fn();
+    const a = stub('select', 'selection-options');
+    const b = stub('paint-terrain', 'terrain-options', { activate });
+    initToolManager(ctx, [a, b], document.getElementById('viewport')!, () => {});
+    expect(activate).not.toHaveBeenCalled();
+    (document.querySelector('.tool-btn[data-tool="paint-terrain"]') as HTMLButtonElement).click();
+    expect(activate).toHaveBeenCalledTimes(1);
   });
 
   it('gives the active tool first refusal on keys', () => {

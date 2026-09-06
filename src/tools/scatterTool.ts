@@ -1,4 +1,4 @@
-import type { TerrainDescriptor } from '@loyalj/hex-world';
+import type { TerrainDescriptor, ScatterDescriptor } from '@loyalj/hex-world';
 import { floodRegion } from './hexPath.ts';
 import { wireBrushGroup, wireOptionGroup } from '../ui/uiHelpers.ts';
 import { BrushTool } from './brushTool.ts';
@@ -8,8 +8,8 @@ import type { CellPos, ToolContext, ToolId } from './tool.ts';
 type ScatterMode = 'brush' | 'fill';
 
 export const DENSITY_LABELS = ['none', 'sparse', 'medium', 'dense'];
-/** Feature layer index → brush name, matching scene.ts's scatter definitions. */
-export const SCATTER_LAYER_NAMES = ['Pines', 'Rocks', 'Broadleaf', 'Bushes'];
+export { SCATTER_LAYER_NAMES } from '../scatterRoster.ts';
+import { SCATTER_LAYER_NAMES, defaultScatter } from '../scatterRoster.ts';
 
 /**
  * Scatter density paint across the four feature layers, filtered by elevation
@@ -33,9 +33,8 @@ export class ScatterTool extends BrushTool {
 
   constructor(ctx: ToolContext) {
     super(ctx);
-    wireOptionGroup('#scatter-type-group .scatter-type-btn', btn => {
-      this.layer = parseInt(btn.dataset['scatterLayer']!, 10);
-    });
+    // A scene that carries no roster (test fakes) gets the editor defaults.
+    this.refreshTypes(ctx.scene.scatterDescriptors ?? defaultScatter().descriptors);
     this.densityBtns = wireOptionGroup('#density-group .density-btn', btn => {
       this.level = parseInt(btn.dataset['density']!, 10);
     });
@@ -55,6 +54,29 @@ export class ScatterTool extends BrushTool {
     (document.getElementById('scatter-elev-max') as HTMLInputElement).addEventListener('input', e => {
       this.elevMax = Math.max(-128, Math.min(127, parseInt((e.target as HTMLInputElement).value, 10)));
       if (this.elevMax < this.elevMin) this.elevMin = this.elevMax;
+    });
+  }
+
+  /**
+   * Rebuild the type buttons from the roster — one per scatter type, each
+   * painting its own layer. Called at start and whenever the builder changes
+   * the set; the active layer is kept if a type still paints it.
+   */
+  refreshTypes(descriptors: readonly ScatterDescriptor[]): void {
+    const group = document.getElementById('scatter-type-group')!;
+    group.innerHTML = '';
+    if (!descriptors.some(d => d.layerIndex === this.layer)) this.layer = descriptors[0]?.layerIndex ?? 0;
+    for (const d of descriptors) {
+      const btn = document.createElement('button');
+      btn.className = 'scatter-type-btn';
+      btn.dataset['scatterLayer'] = String(d.layerIndex);
+      btn.textContent = d.name;
+      btn.title = `Paints density on feature layer ${d.layerIndex}`;
+      btn.classList.toggle('active', d.layerIndex === this.layer);
+      group.appendChild(btn);
+    }
+    wireOptionGroup('#scatter-type-group .scatter-type-btn', btn => {
+      this.layer = parseInt(btn.dataset['scatterLayer']!, 10);
     });
   }
 

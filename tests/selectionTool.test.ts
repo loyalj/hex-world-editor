@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
 import { SelectionTool } from '../src/tools/selectionTool.ts';
-import { clickOption, loadEditorDom, makeCtx, makeScene, pev } from './helpers.ts';
+import { clickOption, loadEditorDom, makeCtx, makeScene, pev, setInput } from './helpers.ts';
 import type { FakeScene } from './helpers.ts';
 
 let s: FakeScene;
@@ -68,7 +68,7 @@ describe('pointer mode', () => {
   });
 
   it('a wider brush paints its whole footprint', () => {
-    clickOption('#selection-brush-group .brush-btn[data-brush="1"]');
+    setInput('selection-brush-size', '1');
     tool.pointerDown({ col: 5, row: 5 }, pev());
     tool.pointerUp();
     expect(s.selection.size).toBe(7);
@@ -78,7 +78,7 @@ describe('pointer mode', () => {
   });
 
   it('the brush footprint clips at the map border', () => {
-    clickOption('#selection-brush-group .brush-btn[data-brush="1"]');
+    setInput('selection-brush-size', '1');
     tool.pointerDown({ col: 0, row: 0 }, pev());
     tool.pointerUp();
     expect(s.selection.has(0, 0)).toBe(true);
@@ -88,8 +88,40 @@ describe('pointer mode', () => {
     }
   });
 
+  it('ring selects only the outer band and the hover outline follows it', () => {
+    setInput('selection-brush-size', '2');
+    clickOption('#selection-shape-group .scatter-type-btn[data-brush-shape="ring"]');
+    tool.pointerDown({ col: 6, row: 6 }, pev());
+    tool.pointerUp();
+    expect(s.selection.size).toBe(12);
+    expect(s.selection.has(6, 6)).toBe(false);
+    expect(tool.hoverFootprint({ col: 6, row: 6 })).toHaveLength(12);
+    expect(tool.statusText()).toContain('ring 12');
+  });
+
+  it('spray rolls each cell against the density', () => {
+    setInput('selection-brush-size', '1');
+    clickOption('#selection-shape-group .scatter-type-btn[data-brush-shape="spray"]');
+    setInput('selection-density', '50');
+    let i = 0;
+    const rolls = [0.1, 0.9, 0.1, 0.9, 0.1, 0.9, 0.1];
+    (tool as unknown as { rng: () => number }).rng = () => rolls[i++ % rolls.length];
+    tool.pointerDown({ col: 6, row: 6 }, pev());
+    tool.pointerUp();
+    expect(s.selection.size).toBe(4);
+    expect(tool.statusText()).toContain('spray ~4 of 7');
+  });
+
+  it('the bracket keys step the size in pointer mode only', () => {
+    expect(tool.keyDown(new KeyboardEvent('keydown', { key: ']' }))).toBe(true);
+    expect(tool.brushRadius()).toBe(1);
+    expect(document.getElementById('selection-brush-size-value')!.textContent).toBe('1 · 7 cells');
+    clickOption('#selection-mode-group .brush-btn[data-select-mode="wand"]');
+    expect(tool.keyDown(new KeyboardEvent('keydown', { key: ']' }))).toBe(false);
+  });
+
   it('brushRadius follows the brush only while in pointer mode', () => {
-    clickOption('#selection-brush-group .brush-btn[data-brush="2"]');
+    setInput('selection-brush-size', '2');
     expect(tool.brushRadius()).toBe(2);
     clickOption('#selection-mode-group .brush-btn[data-select-mode="wand"]');
     expect(tool.brushRadius()).toBe(0);
@@ -413,6 +445,32 @@ describe('rectangle mode', () => {
     expect(section.classList.contains('hidden')).toBe(false);
     clickOption('#selection-mode-group .brush-btn[data-select-mode="pointer"]');
     expect(section.classList.contains('hidden')).toBe(true);
+  });
+});
+
+describe('selection actions', () => {
+  it('Border keeps only the outline of a filled region', () => {
+    setInput('selection-brush-size', '2');
+    tool.pointerDown({ col: 6, row: 6 }, pev());
+    tool.pointerUp();
+    expect(s.selection.size).toBe(19);
+    (document.getElementById('selection-border-btn') as HTMLButtonElement).click();
+    expect(s.selection.size).toBe(12);
+    expect(s.selection.has(6, 6)).toBe(false);
+    expect(s.selection.has(8, 6)).toBe(true);
+  });
+
+  it('Border of a full-map selection empties it — the map edge is a wall, not a boundary', () => {
+    s.selection.selectAll(s.map.width, s.map.height);
+    (document.getElementById('selection-border-btn') as HTMLButtonElement).click();
+    expect(s.selection.size).toBe(0);
+  });
+
+  it('a stationary right click subtracts like Alt+click', () => {
+    s.selection.apply([{ col: 2, row: 2 }, { col: 3, row: 2 }], 'replace');
+    tool.rightClick({ col: 2, row: 2 }, pev());
+    expect(s.selection.size).toBe(1);
+    expect(s.selection.has(3, 2)).toBe(true);
   });
 });
 

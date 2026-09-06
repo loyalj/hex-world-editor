@@ -10,8 +10,12 @@ import { hydrateInfoTips } from './ui/infoTips.ts';
 import { initPalette, EDITOR_DEFAULT_TERRAINS } from './ui/palette.ts';
 import { initLocksPanel } from './ui/locksPanel.ts';
 import { initTerrainStatsPanel } from './ui/terrainStatsPanel.ts';
+import { initTerritoryStatsPanel } from './ui/territoryStatsPanel.ts';
+import { initResourceStatsPanel } from './ui/resourceStatsPanel.ts';
 import { initRiverAudit } from './ui/riverAudit.ts';
+import { initRoadAudit } from './ui/roadAudit.ts';
 import { initRosters } from './ui/rosters.ts';
+import { initScatterBuilder } from './ui/scatterBuilder.ts';
 import { initPersistence } from './ui/persistence.ts';
 import { initMenus } from './ui/menus.ts';
 import { initSettings } from './ui/settings.ts';
@@ -85,7 +89,7 @@ function commitEdit(edit: MapEdit): void {
 const ctx: ToolContext = {
   scene,
   commitEdit,
-  minimapInvalidate: () => minimap.invalidate(),
+  minimapInvalidate: cells => minimap.invalidate(cells),
   // Filled in by initToolManager / initPersistence; stubs so tools may call
   // them while wiring.
   syncBrushRadius:     () => {},
@@ -143,6 +147,10 @@ const terrainStats = initTerrainStatsPanel({
   previewFor: index => palette.previewFor(index),
 });
 refreshTerrainStats = () => terrainStats.refresh();
+// The Holdings panel: per-faction cell counts, recounted on every edit.
+const holdings = initTerritoryStatsPanel({ scene });
+// The Resources panel: per-type counts, recounted on every edit.
+const resourceStats = initResourceStatsPanel({ scene });
 // Locks are saved-file state outside the undo history, like fog exploration —
 // a change marks the document unsaved and schedules the autosave.
 scene.locks.onChange = () => {
@@ -156,21 +164,54 @@ scene.locks.onChange = () => {
 const rosters = initRosters({
   ctx, territoryTool, resourceTool, unitTool,
   terrains: () => palette.terrains,
+  // A renamed or recoloured faction shows in its holdings row.
+  onFactionsChanged: () => holdings.refresh(),
+  onResourcesChanged: () => resourceStats.refresh(),
 });
-// The river check dialog: its rows fly the camera to the offending cell.
-const riverAudit = initRiverAudit({
-  scene,
-  focusCell: cell => {
-    const p = hexToWorld(scene.layout, offsetToHex(cell.col, cell.row));
-    scene.focusWorld(p.x, p.z);
-  },
-});
+// The river and road check dialogs: their rows fly the camera to the offending cell.
+const focusCell = (cell: { col: number; row: number }): void => {
+  const p = hexToWorld(scene.layout, offsetToHex(cell.col, cell.row));
+  scene.focusWorld(p.x, p.z);
+};
+const riverAudit = initRiverAudit({ scene, focusCell });
+const roadAudit  = initRoadAudit({ scene, focusCell });
 document.getElementById('river-audit-btn')!.addEventListener('click', () => riverAudit.open());
+document.getElementById('road-audit-btn')!.addEventListener('click',  () => roadAudit.open());
 
 hydrateInfoTips();
 
+// Scatter types as data: the builder edits them (Edit ▸ Scatter types…), the
+// scene draws them, and persistence saves them. Brush buttons and the resource rules' layer names
+// re-derive on every change.
+const scatterBuilder = initScatterBuilder({
+  scene,
+  terrains: () => palette.terrains,
+  onChanged: () => {
+    scatterTool.refreshTypes(scene.scatterDescriptors);
+    refreshResourceLayerOptions();
+    persistence.noteSettingsChanged();
+    minimap.invalidate();
+  },
+});
+document.getElementById('scatter-menu-btn')!.addEventListener('click', () => scatterBuilder.open());
+
+/** The resource dialog's "needs scatter" layer list follows the roster. */
+function refreshResourceLayerOptions(): void {
+  const select = document.getElementById('resource-feature-layer') as HTMLSelectElement | null;
+  if (!select) return;
+  const keep = select.value;
+  select.innerHTML = '<option value="">\u2014 none \u2014</option>';
+  for (const d of scene.scatterDescriptors) {
+    const o = document.createElement('option');
+    o.value = String(d.layerIndex); o.textContent = d.name;
+    select.appendChild(o);
+  }
+  select.value = keep;
+}
+refreshResourceLayerOptions();
+
 const persistence = initPersistence({
-  scene, history, palette, rosters,
+  scene, history, palette, rosters, scatter: scatterBuilder,
   environment: environmentTool,
   fog:         fogTool,
   pluginIds:          PLUGINS.map(p => p.id),
@@ -197,8 +238,13 @@ document.getElementById('liquid-apply-btn')!
 const menus = initMenus({
   scene,
   minimapInvalidate: () => minimap.invalidate(),
-  // The Terrains panel skips its recount while hidden; showing it catches up.
-  onPanelToggle: (panel, visible) => { if (panel === 'terrains' && visible) terrainStats.refresh(); },
+  // The Terrains and Holdings panels skip their recount while hidden; showing one catches it up.
+  onPanelToggle: (panel, visible) => {
+    if (!visible) return;
+    if (panel === 'terrains') terrainStats.refresh();
+    if (panel === 'holdings') holdings.refresh();
+    if (panel === 'resources') resourceStats.refresh();
+  },
 });
 showLocksPanel = () => menus.setPanelVisible('locks', true);
 
@@ -215,6 +261,10 @@ history.onChange = () => {
   // the Terrains panel) re-derives from here.
   scene.bumpRevision();
   terrainStats.refresh();
+  holdings.refresh();
+  resourceStats.refresh();
+  // Terrain, elevation, river, and scatter edits all move the rules' answer.
+  resourceTool.refreshHighlight();
   // Refreshes the doc strip (dirty asterisk) and schedules the autosave.
   persistence.noteMapChanged();
   minimap.invalidate();

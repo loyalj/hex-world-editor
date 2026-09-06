@@ -5,6 +5,8 @@ import { setInfoTipText } from '../ui/infoTips.ts';
 import { wireOptionGroup } from '../ui/uiHelpers.ts';
 import { computeCostPath } from './pathing.ts';
 import type { PathCostOptions } from './pathing.ts';
+import { roadNetworkOf } from './roadGraph.ts';
+import { selectionOpFor } from '../selection.ts';
 import type { CellPos, Tool, ToolContext, ToolId } from './tool.ts';
 
 type RoadMode = 'path' | 'straight' | 'waypoint' | 'edge' | 'erase';
@@ -18,11 +20,11 @@ const ROAD_MODE_LABELS: Record<RoadMode, string> = {
 };
 
 const ROAD_HINTS: Record<RoadMode, string> = {
-  path:     'Hold and drag to place. Shift to erase. Esc cancels.',
-  straight: 'Hold and drag to place. Shift to erase. Esc cancels.',
+  path:     'Hold and drag to place. Shift to erase. Esc cancels. Alt+click selects a whole road network.',
+  straight: 'Hold and drag to place. Shift to erase. Esc cancels. Alt+click selects a whole road network.',
   waypoint: 'Click to place waypoints. Double-click or Enter to commit. Esc cancels.',
   edge:     'Hover near a cell edge and click to add or remove that one road segment.',
-  erase:    'Click or drag to remove roads from cells.',
+  erase:    'Click or drag to remove roads from cells. Alt+click selects a whole road network.',
 };
 
 /** How far (in hexes) a new road's start reaches for an existing road end. */
@@ -68,13 +70,16 @@ export function snapRoadStart(
  * Road drawing in four modes: cost-pathed or straight drags (Shift erases
  * along the same line), clicked waypoints routed leg by leg through the
  * pathfinder, and a single-edge precision toggle. New roads snap their start
- * to a nearby road terminus so networks stay connected. Owns the
- * pathfinding-cost checkboxes, which the river tool also reads.
+ * to a nearby road terminus so networks stay connected. Alt+click in the
+ * drag and erase modes selects the whole road network under the cursor.
+ * Owns the pathfinding-cost checkboxes, which the river tool also reads.
  */
 export class RoadTool implements Tool {
   readonly id: ToolId = 'paint-road';
   readonly title = 'Road';
   readonly panel = document.getElementById('road-options') as HTMLElement;
+  /** Alt+click picks a whole network into the selection — the crosshair cursor fits. */
+  readonly hasEyedropper = true;
 
   private readonly ctx: ToolContext;
   private readonly costElev    = document.getElementById('road-cost-elev')    as HTMLInputElement;
@@ -91,6 +96,9 @@ export class RoadTool implements Tool {
   private waypointActive = false;
   private eraseTx: MapTransaction | null = null;
   private eraseVisited = new Set<number>();
+  // Alt hover: the network an Alt+click here would select.
+  private hoverNetwork: CellPos | null = null;
+  private hoverNetworkCount = 0;
 
   constructor(ctx: ToolContext) {
     this.ctx = ctx;
@@ -118,8 +126,15 @@ export class RoadTool implements Tool {
 
   brushRadius(): number { return 0; }
 
+  /** Whether Alt+click selects a network in this mode — the click modes keep Alt for themselves. */
+  private get altSelects(): boolean { return this.mode !== 'edge' && this.mode !== 'waypoint'; }
+
   pointerDown(cell: CellPos, e: PointerEvent): void {
     const scene = this.ctx.scene;
+    if (e.altKey && this.altSelects) {
+      this.selectNetwork(cell, e);
+      return;
+    }
     if (this.mode === 'edge') {
       const hit = this.pickEdge(e);
       if (!hit) return;
@@ -170,13 +185,44 @@ export class RoadTool implements Tool {
       }
       return;
     }
-    if (!this.down) return;
+    if (!this.down) {
+      this.updateNetworkHover(cell, e.altKey && this.altSelects);
+      return;
+    }
     if (this.mode === 'erase') {
       if (cell) this.eraseRoadsAt(cell.col, cell.row);
       return;
     }
     this.erasing = e.shiftKey;
     this.updatePreview();
+  }
+
+  /** Alt+click: the whole road network into the selection, with the usual modifier convention. */
+  private selectNetwork(cell: CellPos, e: PointerEvent): void {
+    e.preventDefault();
+    const network = roadNetworkOf(this.ctx.scene.map, cell.col, cell.row);
+    if (network.length === 0) return;
+    // Alt is the trigger here, not "subtract": Shift adds, plain replaces.
+    const op = selectionOpFor({ shiftKey: e.shiftKey, altKey: false });
+    this.ctx.scene.selection.apply(network, op);
+    this.clearNetworkHover();
+  }
+
+  /** With Alt held, show the network a click would select; otherwise nothing. */
+  private updateNetworkHover(cell: CellPos | null, alt: boolean): void {
+    if (!cell || !alt) { this.clearNetworkHover(); return; }
+    if (this.hoverNetwork && this.hoverNetwork.col === cell.col && this.hoverNetwork.row === cell.row) return;
+    const network = roadNetworkOf(this.ctx.scene.map, cell.col, cell.row);
+    this.hoverNetwork = cell;
+    this.hoverNetworkCount = network.length;
+    this.ctx.scene.setSelectionPreview(network.length > 0 ? network : null);
+  }
+
+  private clearNetworkHover(): void {
+    if (!this.hoverNetwork) return;
+    this.hoverNetwork = null;
+    this.hoverNetworkCount = 0;
+    this.ctx.scene.setSelectionPreview(null);
   }
 
   pointerUp(): void {
@@ -223,6 +269,7 @@ export class RoadTool implements Tool {
       this.eraseVisited = new Set();
     }
     this.cancelDrag();
+    this.clearNetworkHover();
   }
 
   private cancelDrag(): void {
@@ -365,6 +412,8 @@ export class RoadTool implements Tool {
   }
 
   statusText(): string {
-    return `Road · ${ROAD_MODE_LABELS[this.mode]}`;
+    const base = `Road · ${ROAD_MODE_LABELS[this.mode]}`;
+    if (this.hoverNetworkCount > 0) return `${base} · Alt+click selects ${this.hoverNetworkCount} road cells`;
+    return base;
   }
 }

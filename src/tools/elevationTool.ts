@@ -1,6 +1,6 @@
-import { hexToOffset, offsetNeighbor, offsetToHex } from '@loyalj/hex-world';
+import { hexRange, hexToOffset, offsetNeighbor, offsetToHex } from '@loyalj/hex-world';
 import type { HexCoord } from '@loyalj/hex-world';
-import { EDGE_DIRS, floodRegion, hexLineDraw } from './hexPath.ts';
+import { EDGE_DIRS, floodRegion, hexDistance, hexLineDraw } from './hexPath.ts';
 import { wireOptionGroup } from '../ui/uiHelpers.ts';
 import { wireBrushControls } from '../ui/brushControls.ts';
 import type { BrushControls } from '../ui/brushControls.ts';
@@ -9,11 +9,13 @@ import type { WeightedCell } from './brushFootprint.ts';
 import { BrushTool } from './brushTool.ts';
 import type { CellPos, ToolContext, ToolId } from './tool.ts';
 
-type ElevMode = 'raise-lower' | 'smooth' | 'flatten' | 'noise' | 'set-absolute' | 'slope' | 'erosion';
+type ElevMode = 'raise-lower' | 'smooth' | 'flatten' | 'noise' | 'set-absolute' | 'terrace' | 'slope' | 'erosion';
+/** How a slope ramp climbs from its start height to its end height. */
+export type RampProfile = 'linear' | 'smooth' | 'ease-in' | 'ease-out';
 /** Whether an op lands under the brush or over a filled region. */
 type ElevScope = 'brush' | 'fill';
 /** What a fill click counts as "the same ground". */
-type ElevFillMatch = 'elevation' | 'terrain';
+type ElevFillMatch = 'elevation' | 'terrain' | 'selection';
 
 const ELEV_MODE_LABELS: Record<ElevMode, string> = {
   'raise-lower':  'raise / lower',
@@ -21,19 +23,32 @@ const ELEV_MODE_LABELS: Record<ElevMode, string> = {
   'flatten':      'flatten',
   'noise':        'noise',
   'set-absolute': 'set absolute',
+  'terrace':      'terrace',
   'slope':        'slope ramp',
   'erosion':      'erosion',
 };
 
+/** The ramp's climb as a function of line position, 0 → 0 and 1 → 1 in every profile. */
+export function rampProfile(profile: RampProfile, t: number): number {
+  switch (profile) {
+    case 'smooth':   return t * t * (3 - 2 * t);
+    case 'ease-in':  return t * t;
+    case 'ease-out': return 1 - (1 - t) * (1 - t);
+    default:         return t;
+  }
+}
+
 /**
- * Elevation editing in seven modes. Five are stamps (raise/lower, smooth,
- * flatten, noise, set absolute); slope is a drag that ramps a line between
- * its endpoints; erosion is a per-click multi-pass slump. Every mode but
- * slope applies either under the brush — solid, ring, or spray at any radius,
- * with a soft rim — or, in fill scope, across a region matching the clicked
- * cell's elevation (within a tolerance) or terrain, contiguous or map-wide,
- * with a hover preview of the region. Ctrl held at stroke start snaps the
- * brush to cells at the starting contour.
+ * Elevation editing in eight modes. Six are stamps (raise/lower, smooth,
+ * flatten, noise, set absolute, terrace — heights snapped to a step); slope
+ * is a drag that ramps a band of cells between its endpoints, as wide as
+ * the ramp width and climbing along the chosen profile; erosion is a
+ * per-click multi-pass slump. Every mode but slope applies either under the
+ * brush — solid, ring, or spray at any radius, with a soft rim — or, in fill
+ * scope, across a region matching the clicked cell's elevation (within a
+ * tolerance) or terrain, contiguous or map-wide, with a hover preview of the
+ * region. Ctrl held at stroke start snaps the brush to cells at the starting
+ * contour.
  */
 export class ElevationTool extends BrushTool {
   readonly id: ToolId = 'elevation';
@@ -46,6 +61,9 @@ export class ElevationTool extends BrushTool {
   private step = 1;
   private flattenTarget = 0;
   private setTarget = 0;
+  private terraceStep = 4;
+  private rampWidth = 0;
+  private rampProfile: RampProfile = 'linear';
   private rangeMin = -128;
   private rangeMax = 127;
   private readonly brush: BrushControls;
@@ -57,6 +75,8 @@ export class ElevationTool extends BrushTool {
   private slopeDown = false;
   private pathStart: CellPos | null = null;
   private currentPath: HexCoord[] | null = null;
+  /** Whether the ramp band is showing as a selection preview, so it can be cleared. */
+  private rampBandShown = false;
 
   // Fill scope: the match and the hover preview, the terrain fill's mechanic.
   private fillMatch: ElevFillMatch = 'elevation';
@@ -75,34 +95,48 @@ export class ElevationTool extends BrushTool {
     this.modeBtns = wireOptionGroup('#elev-mode-group .density-btn', btn => {
       if (this.mode === 'slope') this.cancelSlope();
       this.mode = btn.dataset['elevMode'] as ElevMode;
-      this.updateStepVisibility();
+      this.updateSectionVisibility();
       this.refreshFillPreview();
       ctx.syncBrushRadius();
     });
 
-    const brushHeader = document.getElementById('elev-brush-header') as HTMLElement;
-    const brushGroup  = document.getElementById('elev-brush-group')  as HTMLElement;
-    const fillGroup   = document.getElementById('elev-fill-group')   as HTMLElement;
-    const slopeBtn    = this.panel.querySelector<HTMLButtonElement>('[data-elev-mode="slope"]')!;
+    const slopeBtn = this.panel.querySelector<HTMLButtonElement>('[data-elev-mode="slope"]')!;
     wireOptionGroup('#elev-scope-group .scatter-type-btn', btn => {
       this.scope = btn.dataset['elevScope'] as ElevScope;
       const fill = this.scope === 'fill';
-      brushHeader.classList.toggle('hidden', fill);
-      brushGroup.classList.toggle('hidden', fill);
-      fillGroup.classList.toggle('hidden', !fill);
       // A slope is a drag between two points — there's no region to fill it
       // over. Fill scope parks it, and the mode falls back to raise/lower.
       slopeBtn.disabled = fill;
       if (fill && this.mode === 'slope') this.setMode('raise-lower');
+      this.updateSectionVisibility();
       this.refreshFillPreview();
       ctx.syncBrushRadius();
       ctx.updateCursor();
     });
 
-    const toleranceRow = document.getElementById('elev-fill-tolerance-row') as HTMLElement;
+    (document.getElementById('elev-terrace-step') as HTMLInputElement).addEventListener('input', e => {
+      this.terraceStep = Math.max(1, Math.min(64, parseInt((e.target as HTMLInputElement).value, 10) || 1));
+      this.refreshFillPreview();
+    });
+    const rampWidthEl  = document.getElementById('elev-ramp-width')       as HTMLInputElement;
+    const rampWidthVal = document.getElementById('elev-ramp-width-value') as HTMLElement;
+    rampWidthEl.addEventListener('input', () => {
+      this.rampWidth = Math.max(0, parseInt(rampWidthEl.value, 10) || 0);
+      const wide = 2 * this.rampWidth + 1;
+      rampWidthVal.textContent = wide === 1 ? '1 cell' : `${wide} cells wide`;
+      this.refreshSlopePreview();
+    });
+    wireOptionGroup('#elev-ramp-profile-group .scatter-type-btn', btn => {
+      this.rampProfile = btn.dataset['rampProfile'] as RampProfile;
+    });
+
+    const toleranceRow  = document.getElementById('elev-fill-tolerance-row') as HTMLElement;
+    const contiguousRow = document.getElementById('elev-fill-contiguous-row') as HTMLElement;
     wireOptionGroup('#elev-fill-match-group .scatter-type-btn', btn => {
       this.fillMatch = btn.dataset['fillMatch'] as ElevFillMatch;
       toleranceRow.classList.toggle('hidden', this.fillMatch !== 'elevation');
+      // A selection fill is the whole selection wherever the click lands — connectedness doesn't enter into it.
+      contiguousRow.classList.toggle('hidden', this.fillMatch === 'selection');
       this.refreshFillPreview();
     });
     (document.getElementById('elev-fill-tolerance') as HTMLInputElement).addEventListener('input', e => {
@@ -143,15 +177,22 @@ export class ElevationTool extends BrushTool {
   private setMode(mode: ElevMode): void {
     this.mode = mode;
     this.modeBtns.forEach(b => b.classList.toggle('active', b.dataset['elevMode'] === mode));
-    this.updateStepVisibility();
+    this.updateSectionVisibility();
   }
 
-  private updateStepVisibility(): void {
-    const isRaiseLower = this.mode === 'raise-lower';
-    const isSetAbs     = this.mode === 'set-absolute';
-    document.getElementById('elev-step-header')!.classList.toggle('hidden', !isRaiseLower);
-    document.getElementById('elev-step-group')!.classList.toggle('hidden', !isRaiseLower);
-    document.getElementById('elev-set-target-row')!.classList.toggle('hidden', !isSetAbs);
+  /** Show only the controls the mode and scope read: each op's own row, the brush or the fill options, the ramp for slope. */
+  private updateSectionVisibility(): void {
+    const show = (id: string, on: boolean): void => { document.getElementById(id)!.classList.toggle('hidden', !on); };
+    const fill  = this.scope === 'fill';
+    const slope = this.mode === 'slope';
+    show('elev-step-header',    this.mode === 'raise-lower');
+    show('elev-step-group',     this.mode === 'raise-lower');
+    show('elev-set-target-row', this.mode === 'set-absolute');
+    show('elev-terrace-row',    this.mode === 'terrace');
+    show('elev-ramp-group',     slope && !fill);
+    show('elev-brush-header',   !fill && !slope);
+    show('elev-brush-group',    !fill && !slope);
+    show('elev-fill-group',     fill);
   }
 
   /** The brush radius in cells; the size slider and bracket keys write it. */
@@ -237,6 +278,8 @@ export class ElevationTool extends BrushTool {
       next = this.flattenTarget;
     } else if (this.mode === 'set-absolute') {
       next = this.setTarget;
+    } else if (this.mode === 'terrace') {
+      next = Math.round(prev / this.terraceStep) * this.terraceStep;
     } else {
       next = forPreview ? prev + 1 : prev + Math.floor(Math.random() * 5) - 2; // noise
     }
@@ -268,7 +311,7 @@ export class ElevationTool extends BrushTool {
         offsetToHex(this.pathStart.col, this.pathStart.row),
         offsetToHex(end.col, end.row),
       );
-      this.ctx.scene.setPathPreview(this.currentPath, false);
+      this.refreshSlopePreview();
       return;
     }
     super.pointerMove(cell, e);
@@ -295,6 +338,11 @@ export class ElevationTool extends BrushTool {
   private fillRegion(startCol: number, startRow: number): CellPos[] {
     const scene = this.ctx.scene;
     const { map } = scene;
+    // A selection fill ignores the clicked cell: it covers every selected
+    // cell the locks allow, whatever it holds.
+    if (this.fillMatch === 'selection') {
+      return scene.selection.cells().filter(c => scene.editable(c.col, c.row));
+    }
     if (!scene.editable(startCol, startRow)) return [];
     let matches: (col: number, row: number) => boolean;
     if (this.fillMatch === 'terrain') {
@@ -380,7 +428,43 @@ export class ElevationTool extends BrushTool {
 
   // ---- Slope ----
 
-  /** Ramp every cell on the dragged line between its endpoint elevations. */
+  /**
+   * The ramp's band: every in-bounds cell within the width of the dragged
+   * line, each carrying the line position (0 at the start, 1 at the end) of
+   * its nearest line cell — so the band's contours run across the line.
+   */
+  private rampCells(path: HexCoord[]): Array<{ col: number; row: number; t: number }> {
+    const { map } = this.ctx.scene;
+    const n = Math.max(1, path.length - 1);
+    const best = new Map<number, { col: number; row: number; t: number; d: number }>();
+    path.forEach((hex, i) => {
+      for (const h of hexRange(hex, this.rampWidth)) {
+        const off = hexToOffset(h);
+        if (!map.inBounds(off.col, off.row)) continue;
+        const d = hexDistance(hex, h);
+        const key = off.row * map.width + off.col;
+        const cur = best.get(key);
+        if (!cur || d < cur.d) best.set(key, { col: off.col, row: off.row, t: i / n, d });
+      }
+    });
+    return [...best.values()];
+  }
+
+  /** The line as a path preview and, when the ramp is wider than the line, its band as a selection preview. */
+  private refreshSlopePreview(): void {
+    if (!this.slopeDown || !this.currentPath) return;
+    const scene = this.ctx.scene;
+    scene.setPathPreview(this.currentPath, false);
+    if (this.rampWidth > 0) {
+      scene.setSelectionPreview(this.rampCells(this.currentPath));
+      this.rampBandShown = true;
+    } else if (this.rampBandShown) {
+      scene.setSelectionPreview(null);
+      this.rampBandShown = false;
+    }
+  }
+
+  /** Ramp the band along the dragged line between its endpoint elevations. */
   private commitSlope(): void {
     const scene = this.ctx.scene;
     if (this.pathStart && this.currentPath && this.currentPath.length >= 2) {
@@ -388,19 +472,16 @@ export class ElevationTool extends BrushTool {
       const endOff    = hexToOffset(this.currentPath[this.currentPath.length - 1]);
       const startElev = scene.map.getElevation(startOff.col, startOff.row);
       const endElev   = scene.map.getElevation(endOff.col,   endOff.row);
-      const n = this.currentPath.length - 1;
       const tx = scene.map.beginEdit();
-      for (let i = 0; i <= n; i++) {
-        const off = hexToOffset(this.currentPath[i]);
-        if (off.col < 0 || off.col >= scene.map.width || off.row < 0 || off.row >= scene.map.height) continue;
-        // The ramp is computed over the whole line; mask/locks only gate writes.
-        if (!scene.editable(off.col, off.row)) continue;
-        const prev = scene.map.getElevation(off.col, off.row);
+      for (const { col, row, t } of this.rampCells(this.currentPath)) {
+        // The ramp is computed over the whole band; mask/locks only gate writes.
+        if (!scene.editable(col, row)) continue;
+        const prev = scene.map.getElevation(col, row);
         const next = Math.max(this.rangeMin, Math.min(this.rangeMax,
-          Math.round(startElev + (endElev - startElev) * (i / n))));
+          Math.round(startElev + (endElev - startElev) * rampProfile(this.rampProfile, t))));
         if (prev === next) continue;
-        tx.setElevation(off.col, off.row, next);
-        scene.chunks.markDirty(off.col, off.row);
+        tx.setElevation(col, row, next);
+        scene.chunks.markDirty(col, row);
       }
       this.ctx.commitEdit(tx.commit());
     }
@@ -409,6 +490,10 @@ export class ElevationTool extends BrushTool {
 
   private cancelSlope(): void {
     this.ctx.scene.setPathPreview(null);
+    if (this.rampBandShown) {
+      this.ctx.scene.setSelectionPreview(null);
+      this.rampBandShown = false;
+    }
     this.pathStart    = null;
     this.currentPath  = null;
     this.slopeDown    = false;
@@ -479,14 +564,21 @@ export class ElevationTool extends BrushTool {
 
   statusText(): string {
     const mode = ELEV_MODE_LABELS[this.mode];
-    const step = this.mode === 'raise-lower' ? ` ${this.step > 0 ? '+' : ''}${this.step}` : '';
+    const step = this.mode === 'raise-lower' ? ` ${this.step > 0 ? '+' : ''}${this.step}`
+      : this.mode === 'terrace' ? ` every ${this.terraceStep}` : '';
     if (this.scope === 'fill') {
-      const scope = this.fillContiguous ? 'fill' : 'fill all';
-      const match = this.fillMatch === 'terrain' ? ' · same terrain' : this.fillTolerance > 0 ? ` · ±${this.fillTolerance}` : '';
+      const scope = this.fillContiguous || this.fillMatch === 'selection' ? 'fill' : 'fill all';
+      const match = this.fillMatch === 'terrain' ? ' · same terrain'
+        : this.fillMatch === 'selection' ? ' · selection'
+        : this.fillTolerance > 0 ? ` · ±${this.fillTolerance}` : '';
       const would = this.fillHoverCount > 0 ? ` · would change ${this.fillHoverCount}` : '';
       return `Elevation · ${mode}${step} · ${scope}${match}${would}`;
     }
-    if (this.mode === 'slope') return `Elevation · ${mode}`;
+    if (this.mode === 'slope') {
+      const wide = 2 * this.rampWidth + 1;
+      const width = wide === 1 ? '1 cell' : `${wide} cells`;
+      return `Elevation · ${mode} · ${this.rampProfile.replace('-', ' ')} · ${width} wide`;
+    }
     const { settings } = this.brush;
     const n = expectedCells(settings);
     const count = settings.shape === 'spray' ? `~${n} of ${solidCells(settings.radius)}` : String(n);

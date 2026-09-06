@@ -680,20 +680,45 @@ body {
 .tool-panel > .group-header:first-child,
 #config-fields > .group-header:first-child { margin-top: 0; }
 
-/* The Selection and Rivers actions sit at the drawer's floor: the panel
-   stretches to the drawer body's height and the header's auto margin
-   swallows the free space, carrying everything after it down with it. The
-   padding keeps the usual group gap when the drawer is too short to have
-   free space. */
-#selection-options,
-#river-options { min-height: 100%; }
-#selection-actions-header,
-#river-actions-header {
+/* A panel's closing actions (Selection, Rivers, and the "All cells" groups)
+   sit at the drawer's floor: the panel stretches to the drawer body's height
+   and the header's auto margin swallows the free space, carrying everything
+   after it down with it. The padding keeps the usual group gap when the
+   drawer is too short to have free space. */
+.tool-panel--floored { min-height: 100%; }
+.group-header--floor {
   margin-top: auto;
   padding-top: 22px;
 }
 
 .tool-panel > .field { margin-top: 9px; }
+
+/* The Environment panel folds into sections: it is the longest panel in the
+   drawer and most of it is idle at any moment. The summary IS the group
+   header, with a chevron in place of the browser's marker; which sections
+   stand open is remembered per browser. */
+.env-section > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.env-section > summary::-webkit-details-marker { display: none; }
+.env-section > summary::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  margin-right: 2px;
+  flex: none;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(-45deg);
+  transition: transform 0.15s;
+}
+.env-section[open] > summary::before { transform: translateY(-3px) rotate(45deg); }
+.env-section > summary:hover { color: var(--fg); }
+.env-section:first-child > summary { margin-top: 0; }
+/* A sub-header right after the summary shouldn't add the full group gap. */
+.env-section > summary + .group-header { margin-top: 0; }
 
 /* Segmented control — two or more options sharing one track */
 
@@ -811,6 +836,13 @@ body {
   font-size: 13px;
   color: var(--fg-2);
   font-variant-numeric: tabular-nums;
+}
+
+/* The Territory panel's holdings reuse the Terrains panel's rows. */
+.stat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 /* River check dialog: grouped issue rows, each a jump to the cell. */
@@ -1807,3 +1839,84 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover { background-clip: content-box; background-color: var(--segment); }
+
+
+/* ============================================================
+   Scatter Builder
+   ============================================================ */
+
+#scatter-dialog { width: min(920px, 96vw); }
+#scatter-dialog .dialog-body { padding-bottom: 16px; }
+
+.scatter-body {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 18px;
+  max-height: 78vh;
+}
+.scatter-list-col { display: flex; flex-direction: column; gap: 10px; }
+.scatter-list-col .group-header:first-child { margin-top: 0; }
+.scatter-edit-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+.scatter-edit-col .group-header { margin-top: 8px; }
+
+.scatter-preview-row { display: flex; gap: 14px; align-items: flex-start; }
+#scatter-preview {
+  flex: none;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+}
+.scatter-preview-fields { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+
+.scatter-part {
+  background: var(--surface-2);
+  border-radius: var(--r-control);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.scatter-part-head { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.scatter-part-head .scatter-part-field { flex: 1; min-width: 90px; }
+.scatter-part-tools { display: flex; gap: 4px; margin-left: auto; }
+.scatter-part-tools > button {
+  background: var(--surface-3);
+  border: none;
+  color: var(--fg-2);
+  border-radius: var(--r-control);
+  width: 28px; height: 28px;
+  cursor: pointer;
+  font: inherit;
+}
+.scatter-part-tools > button:hover:not(:disabled) { color: var(--fg); }
+.scatter-part-tools > button:disabled { opacity: 0.35; cursor: default; }
+
+.scatter-part-triple { display: flex; gap: 6px; align-items: flex-end; }
+.scatter-part-triple-label {
+  flex: none;
+  width: 58px;
+  font-size: 11px;
+  color: var(--fg-subtle);
+  padding-bottom: 6px;
+}
+.scatter-part-field { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.scatter-part-field > span { font-size: 11px; color: var(--fg-subtle); }
+.scatter-part-field > input,
+.scatter-part-field > select {
+  width: 100%;
+  min-width: 0;
+  background: var(--surface-1);
+  border: 1px solid transparent;
+  color: var(--fg);
+  border-radius: var(--r-control);
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+}
+.scatter-part-field > input[type="color"] { padding: 0; height: 27px; }

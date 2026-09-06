@@ -1,10 +1,11 @@
+import { PORT_KEY, isPort, isShoreCell } from '@loyalj/hex-world';
 import { buildChipRow, wireOptionGroup } from '../ui/uiHelpers.ts';
 import { UNIT_KEY, UNIT_TYPES, unitAt } from '../unitTypes.ts';
 import { BrushTool } from './brushTool.ts';
 import { clearMetadataKey } from './tool.ts';
 import type { ToolContext, ToolId } from './tool.ts';
 
-type UnitMode = 'place' | 'erase';
+type UnitMode = 'place' | 'erase' | 'port';
 
 /**
  * Unit placement: one unit per cell, stored in the metadata channel like
@@ -12,6 +13,10 @@ type UnitMode = 'place' | 'erase';
  * and packs untouched. Land units place only on land and ships only on water
  * — the one placement rule units carry. The scene's unit layer renders the
  * markers, silhouette by type and colour by owning faction.
+ *
+ * The Port mode lives here too: a dock is where a ship meets the land, so it
+ * is the naval half of unit placement. It toggles the library's `port` flag
+ * on shore cells (refused elsewhere), through the same transaction.
  */
 export class UnitTool extends BrushTool {
   readonly id: ToolId = 'paint-unit';
@@ -35,6 +40,9 @@ export class UnitTool extends BrushTool {
 
     document.getElementById('unit-clear-all')!.addEventListener('click', () => {
       clearMetadataKey(ctx, UNIT_KEY, (c, r) => unitAt(ctx.scene.map, c, r) !== null);
+    });
+    document.getElementById('unit-clear-ports')!.addEventListener('click', () => {
+      clearMetadataKey(ctx, PORT_KEY, (c, r) => isPort(ctx.scene.map, c, r));
     });
   }
 
@@ -73,6 +81,15 @@ export class UnitTool extends BrushTool {
 
   protected applyCell(col: number, row: number): void {
     const { map } = this.ctx.scene;
+    if (this.mode === 'port') {
+      // Toggle, so one stroke can clear a dock it just placed; refused off
+      // shore, which is the only place a port means anything.
+      const on = isPort(map, col, row);
+      if (!on && !isShoreCell(map, col, row, t => this.ctx.scene.isWater(t))) return;
+      (this.tx ??= map.beginEdit()).setCellData(col, row, PORT_KEY, on ? undefined : true);
+      this.gameplayDirty = true;
+      return;
+    }
     const prev = unitAt(map, col, row);
     if (this.mode === 'erase') {
       if (!prev) return;
@@ -91,6 +108,7 @@ export class UnitTool extends BrushTool {
 
   statusText(): string {
     if (this.mode === 'erase') return 'Units · erase';
+    if (this.mode === 'port')  return 'Ports · toggle a dock on a shore cell';
     const type    = UNIT_TYPES.find(d => d.id === this.typeId)?.name ?? this.typeId;
     const faction = this.ctx.scene.factions.find(f => f.id === this.factionId)?.name ?? this.factionId;
     return `${type} · ${faction} · place`;

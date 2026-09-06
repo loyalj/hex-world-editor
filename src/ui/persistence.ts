@@ -1,10 +1,10 @@
 import { deserializeMap, serializeMapJSON, deserializeMapJSON, exportHexPack } from '@loyalj/hex-world';
-import type { ScatterDescriptor } from '@loyalj/hex-world';
 import { encodeBits, decodeBits } from '../scene.ts';
 import type { SceneApi } from '../scene.ts';
 import type { CommandHistory } from '../undo/history.ts';
 import type { PaletteApi } from './palette.ts';
 import type { RostersApi } from './rosters.ts';
+import type { ScatterBuilderApi } from './scatterBuilder.ts';
 import type { EnvironmentTool, EnvironmentState } from '../tools/environmentTool.ts';
 import type { FogTool, FogState } from '../tools/fogTool.ts';
 import { clearSession, loadSession, storeSession } from './sessionStore.ts';
@@ -19,49 +19,7 @@ declare global {
   }
 }
 
-/**
- * What an exported `.hexpack` says its scatter is, mirroring the definitions
- * `initScene` builds. Tier 0 is the variant a dense cell draws and tier 2 the
- * one a sparse cell gets — so the *largest* model goes first, or a thinly
- * scattered map comes out drawing nothing but its biggest asset.
- */
-const SCATTER_DESCRIPTORS: ScatterDescriptor[] = [
-  {
-    id: 'pine', name: 'Pine Trees', layerIndex: 0,
-    tiers: [
-      [{ assetId: 'pine-dense',   yOffset: 0 }],
-      [{ assetId: 'pine-medium',  yOffset: 0 }],
-      [{ assetId: 'pine-sparse',  yOffset: 0 }],
-    ],
-  },
-  {
-    id: 'rock', name: 'Rocks', layerIndex: 1,
-    tiltStrength: 0.4,
-    tiers: [
-      [{ assetId: 'rock-large',  yOffset: 0.17 }],
-      [{ assetId: 'rock-medium', yOffset: 0.13 }],
-      [{ assetId: 'rock-small',  yOffset: 0.10 }],
-    ],
-  },
-  {
-    id: 'broadleaf', name: 'Broadleaf Trees', layerIndex: 2,
-    tiltStrength: 0.05,
-    tiers: [
-      [{ assetId: 'broadleaf-dense',  yOffset: 0 }],
-      [{ assetId: 'broadleaf-medium', yOffset: 0 }],
-      [{ assetId: 'broadleaf-sparse', yOffset: 0 }],
-    ],
-  },
-  {
-    id: 'bush', name: 'Bushes', layerIndex: 3,
-    tiltStrength: 0.12,
-    tiers: [
-      [{ assetId: 'bush-dense',  yOffset: 0 }],
-      [{ assetId: 'bush-medium', yOffset: 0 }],
-      [{ assetId: 'bush-sparse', yOffset: 0 }],
-    ],
-  },
-];
+
 
 /**
  * The editor-only block appended to the library's save JSON under the `editor`
@@ -87,6 +45,7 @@ export interface PersistenceOptions {
   history: CommandHistory;
   palette: PaletteApi;
   rosters: RostersApi;
+  scatter: ScatterBuilderApi;
   environment: EnvironmentTool;
   fog: FogTool;
   /** Known generator plugin ids — load only adopts a generatorId it recognises. */
@@ -125,7 +84,7 @@ export interface PersistenceApi {
 }
 
 export function initPersistence(opts: PersistenceOptions): PersistenceApi {
-  const { scene, history, palette, rosters } = opts;
+  const { scene, history, palette, rosters, scatter } = opts;
 
   const docName   = document.getElementById('doc-name')     as HTMLElement;
   const docSize   = document.getElementById('doc-size')     as HTMLElement;
@@ -193,7 +152,8 @@ export function initPersistence(opts: PersistenceOptions): PersistenceApi {
   /** The library's JSON with the editor block appended. */
   async function buildSaveJSON(): Promise<string> {
     const json = serializeMapJSON(scene.map, { generatorId, seed: currentSeed }, {
-      scatterDescriptors:  SCATTER_DESCRIPTORS,
+      scatterDescriptors:  scatter.descriptors,
+      scatterAssets:       scatter.assets,
       terrainDescriptors:  palette.terrains,
       liquidDescriptors:   palette.liquids,
       resourceDescriptors: rosters.resourceTypes,
@@ -229,6 +189,7 @@ export function initPersistence(opts: PersistenceOptions): PersistenceApi {
     await palette.applyLoadedDescriptors(
       result.terrainDescriptors, result.liquidDescriptors, editor?.terrainImages);
     rosters.applyLoaded(result.factions, result.resourceDescriptors);
+    scatter.applyLoaded(result.scatterAssets, result.scatterDescriptors);
     scene.replaceMap(result.map);
     history.clear();
     // The editor block is best-effort: a hand-edited or older file must still
@@ -375,7 +336,8 @@ export function initPersistence(opts: PersistenceOptions): PersistenceApi {
       name:                'Map Pack',
       terrainDescriptors:  palette.terrains,
       liquidDescriptors:   palette.liquids,
-      scatterDescriptors:  SCATTER_DESCRIPTORS,
+      scatterDescriptors:  scatter.descriptors,
+      scatterAssets:       scatter.assets,
       resourceDescriptors: rosters.resourceTypes,
       factions:            rosters.factions,
       textureAssets:       palette.textureAssets,
@@ -402,10 +364,11 @@ export function initPersistence(opts: PersistenceOptions): PersistenceApi {
     if (!file) return;
     openPackInput.value = '';
     try {
-      const { terrainDescriptors, liquidDescriptors, factions, resourceDescriptors, maps } =
+      const { terrainDescriptors, liquidDescriptors, factions, resourceDescriptors, scatterAssets, scatterDescriptors, maps } =
         await scene.loadAndApplyHexPack(file);
       palette.adoptPackDescriptors(terrainDescriptors, liquidDescriptors);
       rosters.applyLoaded(factions, resourceDescriptors);
+      scatter.applyLoaded(scatterAssets, scatterDescriptors);
       if (maps.size > 0) {
         scene.replaceMap([...maps.values()][0]);
         history.clear();

@@ -1,4 +1,5 @@
 import type { SeasonScope, WeatherType } from '@loyalj/hex-world';
+import { loadUiPref, storeUiPref } from '../ui/uiPrefs.ts';
 import type { CellPos, Tool, ToolContext, ToolId } from './tool.ts';
 
 /**
@@ -32,10 +33,11 @@ function formatClock(minutes: number): string {
 
 /**
  * Scene-wide settings rather than a paint brush: time of day, weather, wind,
- * scatter texture, and seasons. The panel is the source of truth — its opening
- * state is pushed into the scene at construction, because the library builds
- * its day/weather/season systems lazily and browsers restore control state
- * across a reload without firing `change`.
+ * scatter texture, and seasons, each a folding section of the panel. The
+ * panel is the source of truth — its opening state is pushed into the scene
+ * at construction, because the library builds its day/weather/season systems
+ * lazily and browsers restore control state across a reload without firing
+ * `change`.
  */
 export class EnvironmentTool implements Tool {
   readonly id: ToolId = 'environment';
@@ -64,6 +66,20 @@ export class EnvironmentTool implements Tool {
   constructor(ctx: ToolContext) {
     this.ctx = ctx;
     const scene = ctx.scene;
+
+    // ---- Folding sections ----
+    // Which sections stand open is a per-browser convenience, like panel
+    // visibility, not document state — so it lives in the UI prefs, not the
+    // snapshot. The info-tip glyph inside a summary must not toggle the fold.
+    for (const section of this.panel.querySelectorAll<HTMLDetailsElement>('details.env-section')) {
+      const name = section.dataset['section'] ?? '';
+      const stored = loadUiPref(`env-section:${name}`);
+      if (stored !== null) section.open = stored;
+      section.addEventListener('toggle', () => storeUiPref(`env-section:${name}`, section.open));
+      section.querySelector('summary')?.addEventListener('click', e => {
+        if ((e.target as HTMLElement).closest('.info-tip')) e.preventDefault();
+      });
+    }
 
     // ---- Time of day + weather ----
     const todSlider     = this.todSlider;

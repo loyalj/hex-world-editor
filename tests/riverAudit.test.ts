@@ -66,7 +66,7 @@ describe('river audit dialog', () => {
     const audit = initRiverAudit({ scene: s as unknown as SceneApi, focusCell: c => focused.push(c) });
     audit.open();
     expect(groups()).toEqual(['Low source · 1']);
-    const min = document.getElementById('river-audit-min-source') as HTMLInputElement;
+    const min = document.getElementById('river-audit-threshold') as HTMLInputElement;
     min.value = '0';
     min.dispatchEvent(new Event('change'));
     expect(rows()).toHaveLength(0);

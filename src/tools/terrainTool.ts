@@ -23,13 +23,14 @@ interface FillIndex {
 
 type TerrainMode = 'brush' | 'fill';
 /** What a fill click counts as "the same terrain". */
-type FillMatch = 'exact' | 'category' | 'set' | 'elevation';
+type FillMatch = 'exact' | 'category' | 'set' | 'elevation' | 'selection';
 
 const FILL_MATCH_LABELS: Record<FillMatch, string> = {
   exact:     'exact',
   category:  'category',
   set:       'custom',
   elevation: 'elevation',
+  selection: 'selection',
 };
 
 /**
@@ -88,12 +89,15 @@ export class TerrainTool extends BrushTool {
     super(ctx);
     this.brushControls = wireBrushControls('terrain', () => ctx.syncBrushRadius());
 
-    const fillSetGrid  = document.getElementById('terrain-fill-set') as HTMLElement;
-    const toleranceRow = document.getElementById('terrain-fill-tolerance-row') as HTMLElement;
+    const fillSetGrid   = document.getElementById('terrain-fill-set') as HTMLElement;
+    const toleranceRow  = document.getElementById('terrain-fill-tolerance-row') as HTMLElement;
+    const contiguousRow = document.getElementById('terrain-fill-contiguous-row') as HTMLElement;
     wireOptionGroup('#terrain-fill-match-group .scatter-type-btn', btn => {
       this.fillMatch = btn.dataset['fillMatch'] as FillMatch;
       fillSetGrid.classList.toggle('hidden', this.fillMatch !== 'set');
       toleranceRow.classList.toggle('hidden', this.fillMatch !== 'elevation');
+      // A selection fill is the whole selection wherever the click lands — connectedness doesn't enter into it.
+      contiguousRow.classList.toggle('hidden', this.fillMatch === 'selection');
       this.refreshFillPreview();
     });
     (document.getElementById('terrain-fill-tolerance') as HTMLInputElement).addEventListener('input', e => {
@@ -275,6 +279,11 @@ export class TerrainTool extends BrushTool {
     const scene = this.ctx.scene;
     const { map } = scene;
     const notPaint = ({ col, row }: CellPos): boolean => map.getTerrain(col, row) !== this.paintTerrain;
+    // A selection fill ignores the clicked cell: it paints every selected
+    // cell the locks allow, whatever it holds.
+    if (this.fillMatch === 'selection') {
+      return scene.selection.cells().filter(c => scene.editable(c.col, c.row)).filter(notPaint);
+    }
     if (this.fillMatch === 'elevation' && this.fillTolerance > 0) {
       return this.elevationBand(startCol, startRow).filter(notPaint);
     }
@@ -354,7 +363,7 @@ export class TerrainTool extends BrushTool {
     const name = this.ctx.scene.terrainLookup.get(this.paintTerrain)?.name ?? String(this.paintTerrain);
     if (this.mode === 'fill') {
       const would = this.fillHoverCount > 0 ? ` · would paint ${this.fillHoverCount}` : '';
-      const scope = this.fillContiguous ? 'fill' : 'fill all';
+      const scope = this.fillContiguous || this.fillMatch === 'selection' ? 'fill' : 'fill all';
       const tolerance = this.fillMatch === 'elevation' && this.fillTolerance > 0 ? ` ±${this.fillTolerance}` : '';
       const match = this.fillMatch === 'exact' ? '' : ` · ${FILL_MATCH_LABELS[this.fillMatch]}${tolerance}`;
       return `${name} · ${scope}${match}${would}`;

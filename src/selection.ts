@@ -201,7 +201,27 @@ export class SelectionModel {
    * map stays selected, so a full-map selection is stable under shrink.
    */
   shrink(width: number, height: number): void {
-    const removals: Array<{ col: number; row: number }> = [];
+    this.apply(this.boundary(width, height), 'subtract');
+  }
+
+  /**
+   * Keep only the boundary cells — the selection minus what shrink would
+   * keep, so a filled region becomes its outline one cell thick. The map
+   * edge is a wall here too: a full-map selection borders down to the ring
+   * of edge cells... none of which touch an unselected cell, so it empties.
+   */
+  border(width: number, height: number): void {
+    const boundary = new Set(this.boundary(width, height).map(c => (c.row << 16) | c.col));
+    const interior: Array<{ col: number; row: number }> = [];
+    for (const key of this.keys) {
+      if (!boundary.has(key)) interior.push({ col: key & 0xffff, row: key >> 16 });
+    }
+    this.apply(interior, 'subtract');
+  }
+
+  /** The selected cells with at least one unselected in-bounds neighbour. */
+  private boundary(width: number, height: number): Array<{ col: number; row: number }> {
+    const cells: Array<{ col: number; row: number }> = [];
     for (const key of this.keys) {
       const col = key & 0xffff;
       const row = key >> 16;
@@ -209,11 +229,11 @@ export class SelectionModel {
         const nb = offsetNeighbor(col, row, EDGE_DIRS[dir]);
         if (nb.col < 0 || nb.col >= width || nb.row < 0 || nb.row >= height) continue;
         if (!this.keys.has((nb.row << 16) | nb.col)) {
-          removals.push({ col, row });
+          cells.push({ col, row });
           break;
         }
       }
     }
-    this.apply(removals, 'subtract');
+    return cells;
   }
 }

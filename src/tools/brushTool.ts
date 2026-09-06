@@ -39,6 +39,8 @@ export abstract class BrushTool implements Tool {
   private strokeAnchor: CellPos | null = null;
   /** Source of the paint-probability rolls; tests swap in a deterministic one. */
   protected rng: () => number = Math.random;
+  /** In-bounds cells this pointer event's stamps reached — the minimap repaints just these. */
+  private stampedCells: CellPos[] = [];
 
   constructor(ctx: ToolContext) {
     this.ctx = ctx;
@@ -127,6 +129,7 @@ export abstract class BrushTool implements Tool {
     const { map } = this.ctx.scene;
     for (const { col, row, weight } of this.footprint(cell)) {
       if (col < 0 || col >= map.width || row < 0 || row >= map.height) continue;
+      this.stampedCells.push({ col, row });
       if (!this.cellEditable(col, row)) continue;
       const key = this.cellKey(col, row);
       if (this.visited.has(key)) continue;
@@ -140,8 +143,10 @@ export abstract class BrushTool implements Tool {
   private afterStamps(): void {
     this.flushGameplay();
     // Mid-stroke feedback: the stroke only commits (and so only reaches
-    // history.onChange) on pointer-up. The minimap throttles its own redraws.
-    this.ctx.minimapInvalidate();
+    // history.onChange) on pointer-up. Scoped to the stamped cells, so the
+    // repaint costs the footprint, not the map.
+    this.ctx.minimapInvalidate(this.stampedCells);
+    this.stampedCells = [];
   }
 
   protected flushGameplay(): void {

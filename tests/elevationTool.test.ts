@@ -204,6 +204,92 @@ describe('elevation brush shapes and sizing', () => {
   });
 });
 
+describe('terrace mode', () => {
+  const terrace = () => clickOption('#elev-mode-group .density-btn[data-elev-mode="terrace"]');
+
+  it('snaps a slope to multiples of the step under the brush', () => {
+    for (let c = 0; c < 10; c++) s.map.setElevation(c, 5, c);
+    terrace();
+    expect(document.getElementById('elev-terrace-row')!.classList.contains('hidden')).toBe(false);
+    setInput('elev-brush-size', '12');
+    paint(5, 5);
+    expect([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(c => s.map.getElevation(c, 5))).toEqual([0, 0, 4, 4, 4, 4, 8, 8, 8, 8]);
+    expect(tool.statusText()).toContain('terrace every 4');
+  });
+
+  it('the step input drives the snap and fill scope terraces a region', () => {
+    for (let c = 0; c < 10; c++) s.map.setElevation(c, 5, c);
+    terrace();
+    setInput('elev-terrace-step', '3');
+    clickOption('#elev-scope-group .scatter-type-btn[data-elev-scope="fill"]');
+    clickOption('#elev-fill-match-group .scatter-type-btn[data-fill-match="terrain"]');
+    paint(5, 5);
+    expect([0, 1, 2, 3, 4, 5, 6, 7].map(c => s.map.getElevation(c, 5))).toEqual([0, 0, 3, 3, 3, 6, 6, 6]);
+    expect(edits.length).toBe(1);
+  });
+});
+
+describe('ramp width and profile', () => {
+  const slope = () => clickOption('#elev-mode-group .density-btn[data-elev-mode="slope"]');
+  const dragRamp = () => {
+    tool.pointerDown({ col: 0, row: 5 }, pev());
+    tool.pointerMove({ col: 6, row: 5 }, pev());
+    tool.pointerUp();
+  };
+
+  it('the ramp controls show only in slope mode, in place of the brush', () => {
+    const ramp = document.getElementById('elev-ramp-group')!;
+    const brush = document.getElementById('elev-brush-group')!;
+    expect(ramp.classList.contains('hidden')).toBe(true);
+    slope();
+    expect(ramp.classList.contains('hidden')).toBe(false);
+    expect(brush.classList.contains('hidden')).toBe(true);
+    clickOption('#elev-mode-group .density-btn[data-elev-mode="smooth"]');
+    expect(ramp.classList.contains('hidden')).toBe(true);
+    expect(brush.classList.contains('hidden')).toBe(false);
+  });
+
+  it('a wider ramp carries the line height across its band and previews it', () => {
+    s.map.setElevation(6, 5, 6);
+    slope();
+    setInput('elev-ramp-width', '1');
+    expect(document.getElementById('elev-ramp-width-value')!.textContent).toBe('3 cells wide');
+    tool.pointerDown({ col: 0, row: 5 }, pev());
+    tool.pointerMove({ col: 6, row: 5 }, pev());
+    const band = s.selectionPreviews.at(-1) as Array<{ col: number; row: number }>;
+    expect(band.length).toBeGreaterThan(7);
+    tool.pointerUp();
+    expect(s.selectionPreviews.at(-1)).toBeNull();
+    expect(s.map.getElevation(3, 5)).toBe(3);
+    // The cells beside the line take the height of their nearest line cell.
+    const beside = offsetNeighbor(3, 5, EDGE_DIRS[1]);
+    expect(s.map.getElevation(beside.col, beside.row)).toBeGreaterThanOrEqual(2);
+    expect(s.map.getElevation(beside.col, beside.row)).toBeLessThanOrEqual(4);
+    expect(tool.statusText()).toContain('3 cells wide');
+  });
+
+  it('a smooth profile eases both ends, ease-in starts flat, ease-out starts steep', () => {
+    s.map.setElevation(6, 5, 12);
+    slope();
+    clickOption('#elev-ramp-profile-group .scatter-type-btn[data-ramp-profile="smooth"]');
+    dragRamp();
+    expect(s.map.getElevation(1, 5)).toBeLessThan(2);   // linear would be 2
+    expect(s.map.getElevation(3, 5)).toBe(6);            // midpoint unchanged
+    expect(s.map.getElevation(5, 5)).toBeGreaterThan(10); // linear would be 10
+
+    s.map.setElevation(6, 5, 12);
+    for (let c = 0; c < 6; c++) s.map.setElevation(c, 5, 0);
+    clickOption('#elev-ramp-profile-group .scatter-type-btn[data-ramp-profile="ease-in"]');
+    dragRamp();
+    expect(s.map.getElevation(3, 5)).toBe(3);
+
+    for (let c = 0; c < 6; c++) s.map.setElevation(c, 5, 0);
+    clickOption('#elev-ramp-profile-group .scatter-type-btn[data-ramp-profile="ease-out"]');
+    dragRamp();
+    expect(s.map.getElevation(3, 5)).toBe(9);
+  });
+});
+
 describe('elevation fill scope', () => {
   const fillScope = () => clickOption('#elev-scope-group .scatter-type-btn[data-elev-scope="fill"]');
   const setContiguous = (on: boolean) => {
@@ -352,5 +438,42 @@ describe('elevation fill scope', () => {
     tool.pointerUp();
     expect((document.getElementById('elev-set-target') as HTMLInputElement).value).toBe('5');
     expect(edits.length).toBe(0);
+  });
+});
+
+describe('elevation selection fill match', () => {
+  const fillScope = () => clickOption('#elev-scope-group .scatter-type-btn[data-elev-scope="fill"]');
+  const selection = () => clickOption('#elev-fill-match-group .scatter-type-btn[data-fill-match="selection"]');
+
+  it('raises every selected cell whatever its height or terrain, wherever the click lands', () => {
+    s.map.setElevation(2, 2, 5);
+    s.map.setTerrain(3, 2, 1);
+    s.selection.apply([{ col: 2, row: 2 }, { col: 3, row: 2 }, { col: 9, row: 9 }], 'replace');
+    fillScope();
+    selection();
+    tool.pointerMove({ col: 0, row: 0 }, pev());
+    expect(s.selectionPreviews.at(-1)).toHaveLength(3);
+    expect(tool.statusText()).toContain('fill · selection · would change 3');
+    paint(0, 0);
+    expect(s.map.getElevation(2, 2)).toBe(6);
+    expect(s.map.getElevation(3, 2)).toBe(1);
+    expect(s.map.getElevation(9, 9)).toBe(1);
+    expect(s.map.getElevation(0, 0)).toBe(0);
+    expect(edits.length).toBe(1);
+  });
+
+  it('flatten levels the selection to the clicked cell and the contiguous row hides', () => {
+    s.map.setElevation(2, 2, 5);
+    s.map.setElevation(3, 2, 9);
+    s.map.setElevation(6, 6, 4);
+    s.selection.apply([{ col: 2, row: 2 }, { col: 3, row: 2 }], 'replace');
+    fillScope();
+    selection();
+    expect(document.getElementById('elev-fill-contiguous-row')!.classList.contains('hidden')).toBe(true);
+    clickOption('#elev-mode-group .density-btn[data-elev-mode="flatten"]');
+    paint(6, 6);
+    expect(s.map.getElevation(2, 2)).toBe(4);
+    expect(s.map.getElevation(3, 2)).toBe(4);
+    expect(s.map.getElevation(6, 6)).toBe(4);
   });
 });

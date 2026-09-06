@@ -2,8 +2,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { MapEdit } from '@loyalj/hex-world';
 import { RiverTool } from '../src/tools/riverTool.ts';
-import { clickOption, countCells, loadEditorDom, makeCtx, makeScene, pev, WATER } from './helpers.ts';
+import { clickOption, countCells, loadEditorDom, makeCtx, makeScene, pev, setInput, WATER } from './helpers.ts';
 import { downstreamOf } from '../src/tools/riverGraph.ts';
+import { hexToOffset, offsetNeighbor } from '@loyalj/hex-world';
+import { EDGE_DIRS } from '../src/tools/hexPath.ts';
 import type { FakeScene } from './helpers.ts';
 
 let s: FakeScene;
@@ -400,5 +402,148 @@ describe('lakes at the end of drawn rivers', () => {
     // The pond is the end cell and its ring; the river upstream of it is untouched.
     for (let c = 2; c <= 4; c++) expect(s.map.getTerrain(c, 4), `col ${c}`).toBe(0);
     expect(s.map.getOutgoingRiverDir(4, 4)).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('river endpoint snapping', () => {
+  const mode = (m: string) => clickOption(`#river-mode-group .brush-btn[data-river-mode="${m}"]`);
+  beforeEach(() => {
+    mode('straight');
+    drag([2, 4], [4, 4]); // source at (2,4), end at (4,4)
+  });
+
+  it('a drag started near a river end snaps onto it, so the old river flows on', () => {
+    drag([6, 4], [8, 4]); // 2 cells from the (4,4) end
+    expect(s.map.hasRiver(5, 4)).toBe(true);
+    expect(s.map.getOutgoingRiverDir(4, 4)).toBeGreaterThanOrEqual(0);
+    expect(s.map.getOutgoingRiverDir(8, 4)).toBeLessThan(0);
+    expect(downstreamOf(s.map, 4, 4)).toEqual({ col: 5, row: 4 });
+  });
+
+  it('never snaps onto a source, and the toggle turns it off', () => {
+    drag([0, 4], [1, 4]); // 2 cells from the (2,4) source — a source is not an end
+    expect(s.map.hasRiver(0, 4)).toBe(true);
+    expect(s.map.getOutgoingRiverDir(2, 4)).toBeGreaterThanOrEqual(0);
+    expect(s.map.getIncomingRiverMask(2, 4)).toBe(0);
+
+    (document.getElementById('river-snap') as HTMLInputElement).checked = false;
+    drag([6, 4], [8, 4]);
+    expect(s.map.hasRiver(5, 4)).toBe(false);
+    expect(s.map.hasRiver(6, 4)).toBe(true);
+  });
+
+  it('erase drags never snap, and a river that reached water is left alone', () => {
+    tool.pointerDown({ col: 6, row: 4 }, pev({ shiftKey: true }));
+    expect(hexToOffset((s.previews.at(-1) as HexCoordLike[])[0])).toEqual({ col: 6, row: 4 });
+    tool.keyDown(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+    s.map.setTerrain(4, 4, WATER); // the end now sits in water: finished
+    drag([6, 4], [8, 4]);
+    expect(s.map.hasRiver(5, 4)).toBe(false);
+  });
+
+  it('the first waypoint snaps too', () => {
+    mode('waypoint');
+    tool.pointerDown({ col: 6, row: 4 }, pev());
+    tool.pointerDown({ col: 8, row: 4 }, pev());
+    tool.keyDown(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(s.map.hasRiver(5, 4)).toBe(true);
+    expect(s.map.hasRiver(8, 4)).toBe(true);
+  });
+
+  it('the snap row shows in the line modes only', () => {
+    const row = document.getElementById('river-snap-row')!;
+    for (const m of ['path', 'straight', 'waypoint']) { mode(m); expect(row.classList.contains('hidden'), m).toBe(false); }
+    for (const m of ['downhill', 'reverse', 'erase']) { mode(m); expect(row.classList.contains('hidden'), m).toBe(true); }
+  });
+});
+type HexCoordLike = { q: number; r: number };
+
+describe('carving a valley', () => {
+  const mode = (m: string) => clickOption(`#river-mode-group .brush-btn[data-river-mode="${m}"]`);
+
+  it('lowers the ground along the river and half as much beside it, as part of the one edit', () => {
+    for (let c = 0; c < 12; c++) for (let r = 0; r < 12; r++) s.map.setElevation(c, r, 10);
+    setInput('river-carve', '4');
+    mode('straight');
+    drag([2, 4], [6, 4]);
+    for (let c = 2; c <= 6; c++) expect(s.map.getElevation(c, 4)).toBe(6);
+    const beside = offsetNeighbor(4, 4, EDGE_DIRS[1]);
+    expect(s.map.getElevation(beside.col, beside.row)).toBe(8);
+    expect(s.map.getElevation(9, 9)).toBe(10);
+    expect(edits.length).toBe(1);
+    expect(tool.statusText()).toContain('carve 4');
+    edits[0].undo();
+    expect(s.map.getElevation(4, 4)).toBe(10);
+    expect(s.map.hasRiver(4, 4)).toBe(false);
+  });
+
+  it('carving skips water and masked cells and never digs a Shift-erase', () => {
+    for (let c = 0; c < 12; c++) for (let r = 0; r < 12; r++) s.map.setElevation(c, r, 10);
+    s.map.setTerrain(6, 4, WATER);
+    s.selection.apply([{ col: 2, row: 4 }, { col: 3, row: 4 }, { col: 4, row: 4 }, { col: 5, row: 4 }, { col: 6, row: 4 }], 'replace');
+    setInput('river-carve', '2');
+    mode('straight');
+    drag([2, 4], [6, 4]);
+    expect(s.map.getElevation(4, 4)).toBe(8);
+    expect(s.map.getElevation(6, 4)).toBe(10); // water keeps its floor
+    const beside = offsetNeighbor(4, 4, EDGE_DIRS[1]);
+    expect(s.map.getElevation(beside.col, beside.row)).toBe(10); // outside the mask
+    drag([2, 4], [6, 4], true);
+    expect(s.map.getElevation(4, 4)).toBe(8);
+  });
+});
+
+describe('meander', () => {
+  const mode = (m: string) => clickOption(`#river-mode-group .brush-btn[data-river-mode="${m}"]`);
+  const fixRng = () => {
+    let i = 0;
+    const rolls = [0.31, 0.77, 0.12, 0.58, 0.93, 0.44];
+    (tool as unknown as { rng: () => number }).rng = () => rolls[i++ % rolls.length];
+  };
+
+  it('bends a long line within the amount and keeps it one connected river', () => {
+    fixRng();
+    setInput('river-meander', '2');
+    expect(document.getElementById('river-meander-value')!.textContent).toBe('±2 cells');
+    mode('straight');
+    drag([0, 5], [11, 5]);
+    let bent = 0;
+    for (let r = 0; r < 12; r++) for (let c = 0; c < 12; c++) {
+      if (!s.map.hasRiver(c, r)) continue;
+      expect(Math.abs(r - 5)).toBeLessThanOrEqual(3);
+      if (r !== 5) bent++;
+    }
+    expect(bent).toBeGreaterThan(0);
+    // Walk downstream from the source: it reaches the end without a break.
+    let cur: { col: number; row: number } | null = { col: 0, row: 5 };
+    let steps = 0;
+    while (cur && !(cur.col === 11 && cur.row === 5) && steps < 200) { cur = downstreamOf(s.map, cur.col, cur.row); steps++; }
+    expect(cur).toEqual({ col: 11, row: 5 });
+    expect(edits.length).toBe(1);
+    expect(tool.statusText()).toContain('meander ±2');
+  });
+
+  it('the preview shows the bends the release lays, and a short line stays straight', () => {
+    fixRng();
+    setInput('river-meander', '2');
+    mode('straight');
+    tool.pointerDown({ col: 0, row: 5 }, pev());
+    s.hoveredCell = { col: 11, row: 5 };
+    tool.pointerMove({ col: 11, row: 5 }, pev());
+    const preview = (s.previews.at(-1) as HexCoordLike[]).map(hexToOffset);
+    tool.pointerUp();
+    for (const { col, row } of preview) expect(s.map.hasRiver(col, row)).toBe(true);
+    expect(preview.length).toBe(countCells(s.map, (c, r) => s.map.hasRiver(c, r)));
+
+    drag([0, 9], [3, 9]);
+    for (let c = 0; c <= 3; c++) expect(s.map.hasRiver(c, 9)).toBe(true);
+    expect(countCells(s.map, (c, r) => s.map.hasRiver(c, r) && r === 9)).toBe(4);
+  });
+
+  it('the meander row shows in the drag modes only', () => {
+    const row = document.getElementById('river-meander-row')!;
+    for (const m of ['path', 'straight']) { mode(m); expect(row.classList.contains('hidden'), m).toBe(false); }
+    for (const m of ['waypoint', 'downhill', 'reverse', 'erase']) { mode(m); expect(row.classList.contains('hidden'), m).toBe(true); }
   });
 });

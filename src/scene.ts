@@ -4,21 +4,21 @@ import {
   loadHexPack, formatSeason, cameraGroundFootprint,
   DEFAULT_RESOURCE_DESCRIPTORS,
   offsetToHex, hexToOffset, hexToWorld, hexRange, hexCorners, hexNeighbor, ELEVATION_SCALE,
-  attachSeasonalTint, attachWindSway, attachScatterTexture, styleScatterTexture,
-  createRockMaterial,
-  createPineGeometry, createBroadleafGeometry, createBushGeometry,
-  BROADLEAF_CANOPY_COLOR, BUSH_COLOR,
-} from '@loyalj/hex-world';
+  styleScatterTexture, resolveScatterAssets, resolveScatterDefinition,
+  } from '@loyalj/hex-world';
 import type {
-  ScatterDefinition, HexCoord, TerrainDefinition, TerrainDescriptor, TerrainAssetRegistry,
+  ScatterDefinition, ScatterAssetDescriptor, ScatterDescriptor, HexCoord, TerrainDefinition, TerrainDescriptor, TerrainAssetRegistry,
   LiquidTypeDescriptor, WeatherType, FactionDescriptor, ResourceDescriptor,
   TerritoryLayer, ResourceLayer, HexLayout, SeasonScope,
 } from '@loyalj/hex-world';
-import { computeElevationRanges, heatmapColor, contourThresholds, riverFlowColor, basinColor } from './analysis.ts';
+import { computeElevationRanges, heatmapColor, contourThresholds, riverFlowColor, basinColor, roadNetworkColor } from './analysis.ts';
+import { buildFlowArrows } from './flowArrows.ts';
 import { computeRiverFlow, riverBasins } from './tools/riverGraph.ts';
+import { roadNetworks } from './tools/roadGraph.ts';
 import { SelectionModel } from './selection.ts';
 import { LockModel } from './locks.ts';
 import { UNIT_TYPES, unitAt } from './unitTypes.ts';
+import { isPort } from '@loyalj/hex-world';
 
 /** How much freedom the camera has. See {@link EditorScene.setCameraMode}. */
 export type CameraMode = 'rts' | 'free';
@@ -63,14 +63,8 @@ const MAP_HEIGHT   = 100;
 const CHUNK_SIZE   = 32;
 const LOAD_RADIUS  = 5;
 
-/**
- * Feature layers every map the editor makes carries, in the order the scatter
- * brushes and the generators address them: 0 conifers, 1 rocks, 2 broadleaf
- * trees, 3 bushes. Exported because the New Map dialog builds its own maps and
- * has to match — `setFeatureLevel` ignores a layer past the end rather than
- * failing, so a short map loses those brushes without saying so.
- */
-export const FEATURE_LAYERS = 4;
+export { FEATURE_LAYERS } from './scatterRoster.ts';
+import { FEATURE_LAYERS, defaultScatter } from './scatterRoster.ts';
 
 /**
  * Starting faction roster for the ownership brush. Ownership lives in the
@@ -136,6 +130,8 @@ export interface SceneApi {
   setRiverFlowOverlay(visible: boolean): void;
   /** Tint river cells by drainage basin — every river sharing a mouth shares a hue. */
   setDrainageBasins(visible: boolean): void;
+  /** Tint road cells by connected network — every cell a road joins shares a hue. */
+  setRoadNetworks(visible: boolean): void;
   /**
    * Rebuild whichever analysis overlays are on from the current map. Cheap
    * no-op while both are off, so callers may fire it on every commit the same
@@ -277,6 +273,12 @@ export interface SceneApi {
    */
   setSelectionPreview(cells: Array<{ col: number; row: number }> | null, subtract?: boolean): void;
   /**
+   * The resource tool's eligibility tint: every cell the chosen type's rules
+   * admit. Its own overlay, so it survives the hover previews that share the
+   * selection-preview slot. Pass null to hide.
+   */
+  setResourceHighlight(cells: Array<{ col: number; row: number }> | null): void;
+  /**
    * Rebuild the selection highlight from the current map — needed after edits
    * that move the ground under it (the fill and ants sit at surface height).
    * Cheap no-op while nothing is selected.
@@ -299,6 +301,11 @@ export interface SceneApi {
 
   /** Show or hide all scatter features (trees, rocks, bushes); the layers underneath keep their data. */
   setScatterVisible(visible: boolean): void;
+  /** The scatter set the scene draws — what a save file records. */
+  readonly scatterAssets: ScatterAssetDescriptor[];
+  readonly scatterDescriptors: ScatterDescriptor[];
+  /** Replace the scatter set: resolve the recipes and rebuild every loaded chunk's scatter in place. */
+  setScatter(assets: ScatterAssetDescriptor[], descriptors: ScatterDescriptor[]): void;
 
   /** Show or hide the unit markers; the metadata underneath keeps its data. */
   setUnitsVisible(visible: boolean): void;
@@ -347,120 +354,43 @@ export interface SceneApi {
     factions: FactionDescriptor[];
     /** Resource types carried by the pack — empty when it defines none. */
     resourceDescriptors: ResourceDescriptor[];
+    scatterAssets: ScatterAssetDescriptor[];
+    scatterDescriptors: ScatterDescriptor[];
     maps: Map<string, HexMap>;
   }>;
 }
 
 export async function initScene(container: HTMLElement, terrainDescriptors?: TerrainDescriptor[]): Promise<SceneApi> {
-  // Scatter — conifers on 3 density tiers (layer 0). No seasonal tint: a pine
-  // that stays green through October is what tells it from the broadleaf below.
-  const pineMat = new THREE.MeshLambertMaterial({ color: 0x3f6b2c });
-  // A stiff conifer barely moves — which is exactly why it gets the call. Wind
-  // sway is opt-in per material for the same reason the seasonal tint is, and
-  // the rock below deliberately never receives it.
-  attachWindSway(pineMat, { height: 2.0, stiffness: 2.6, amplitude: 0.035, flutter: 0.2 });
-  const pineDefinition: ScatterDefinition = {
-    id:         'pine',
-    name:       'Pine Trees',
-    layerIndex: 0,
-    tiers: [
-      [{ geometry: createPineGeometry(2.0), material: pineMat, yOffset: 0 }],
-      [{ geometry: createPineGeometry(1.5), material: pineMat, yOffset: 0 }],
-      [{ geometry: createPineGeometry(1.0), material: pineMat, yOffset: 0 }],
-    ],
-  };
-
-  // Scatter — rocks / boulders on 3 density tiers (layer 1).
-  //
-  // Largest first, matching every other definition here and the threshold table
-  // in ScatterBuilder: tier 0 is the variant a *dense* cell draws, tier 2 the
-  // one a sparse cell gets. These ran the other way round, and since the
-  // generator only ever sets rock density to 1 — which draws tier 2 and nothing
-  // else — every rock on the map was the biggest boulder, towering over sparse
-  // pines that are the smallest tier for the same reason.
-  //
-  // Sized just under the bushes (0.85 → 0.45 wide) so scrub and stone read as
-  // things you'd step over, not landmarks.
-  // createRockMaterial squashes and stretches each instance from a hash of its
-  // own position, so two rocks off the same geometry aren't the same rock. With
-  // only a couple of tiers in play that variation is what stops a scree slope
-  // reading as a pattern. Flat-shaded, so the deformed facets light correctly.
-  const rockMat = createRockMaterial(0x8a7a6a);
-  const rock = (radius: number) => ({
-    geometry: new THREE.IcosahedronGeometry(radius, 0),
-    material: rockMat,
-    // An icosahedron's lowest vertex sits at 0.85 of its radius, and
-    // createRockMaterial squashes instances to as little as 0.52 of their
-    // height — so the shallowest a rock can reach is 0.44r below its centre.
-    // Stay under that and even the flattest one is bedded in rather than
-    // hovering over its own shadow.
-    yOffset:  radius * 0.4,
-  });
-  const rockDefinition: ScatterDefinition = {
-    id:           'rock',
-    name:         'Rocks',
-    layerIndex:   1,
-    tiltStrength: 0.4,
-    tiers: [[rock(0.30)], [rock(0.24)], [rock(0.19)]],
-  };
-
-  // Scatter — broadleaf woods (layer 2) and low scrub (layer 3). Both turn with
-  // the year; `attachSeasonalTint` is the only thing that makes them do it, and
-  // both need an explicit summer reference because a vertexColors material's own
-  // color is white. Snow is attached for us by `setSeasons`.
-  const broadleafMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-  // Blossom rides along with the tint — a share of the wood flowers pink or
-  // blue as spring passes through, then goes green for the summer.
-  attachSeasonalTint(broadleafMat, { summer: BROADLEAF_CANOPY_COLOR, blossomShare: 0.6 });
-  attachWindSway(broadleafMat, { height: 1.9, stiffness: 2.0, amplitude: 0.07 });
-  const broadleafDefinition: ScatterDefinition = {
-    id:           'broadleaf',
-    name:         'Broadleaf Trees',
-    layerIndex:   2,
-    tiltStrength: 0.05,
-    tiers: [
-      [{ geometry: createBroadleafGeometry(1.9), material: broadleafMat, yOffset: 0 }],
-      [{ geometry: createBroadleafGeometry(1.4), material: broadleafMat, yOffset: 0 }],
-      [{ geometry: createBroadleafGeometry(1.0), material: broadleafMat, yOffset: 0 }],
-    ],
-  };
-
-  const bushMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-  // A bush is foliage all the way down — skip the green test that keeps the
-  // tint off a broadleaf's trunk.
-  attachSeasonalTint(bushMat, {
-    summer: BUSH_COLOR, select: 0, variance: 0.35, blossomShare: 0.3,
-  });
-  // Short, soft and mostly leaf, so it moves far more of its own height than a
-  // tree does — and bows from near the base rather than holding a trunk stiff.
-  attachWindSway(bushMat, { height: 0.6, stiffness: 1.2, amplitude: 0.125, flutter: 0.6 });
-  const bushDefinition: ScatterDefinition = {
-    id:           'bush',
-    name:         'Bushes',
-    layerIndex:   3,
-    tiltStrength: 0.12,
-    tiers: [
-      [{ geometry: createBushGeometry(0.85), material: bushMat, yOffset: 0 }],
-      [{ geometry: createBushGeometry(0.65), material: bushMat, yOffset: 0 }],
-      [{ geometry: createBushGeometry(0.45), material: bushMat, yOffset: 0 }],
-    ],
-  };
-
-  // Flat-shaded low-poly plants read as plastic beside ground that carries real
-  // triplanar texture, so break each facet up with fine procedural mottling.
-  // Scale tracks facet size rather than plant size: a pine's cone is one long
-  // smooth sweep and takes the coarsest pattern, a bush's lobes are tiny and
-  // take the finest. The rock is here too — stone is what most wants grain.
-  const scatterTextured: Array<[THREE.Material, number]> = [
-    [pineMat, 5], [broadleafMat, 6], [bushMat, 11], [rockMat, 9],
-  ];
-  for (const [mat, scale] of scatterTextured) attachScatterTexture(mat, { scale });
+  // Scatter comes from the roster as data — recipes and material behaviour —
+  // resolved into definitions here and again whenever the Scatter Builder
+  // changes them. Which terrains float decides the `shore` placement rule,
+  // so the resolve takes the world's own liquid predicate once it exists.
+  const initialLiquid = new Set((terrainDescriptors ?? []).filter(d => d.liquidType != null || d.isWater).map(d => d.index));
+  let scatterDefinitions: ScatterDefinition[] = [];
+  let scatterAssetsState: ScatterAssetDescriptor[] = [];
+  let scatterDescriptorsState: ScatterDescriptor[] = [];
+  let scatterTextureStrength = 1;
+  function resolveScatter(assets: ScatterAssetDescriptor[], descriptors: ScatterDescriptor[], isLiquid: (t: number) => boolean): ScatterDefinition[] {
+    const registry = resolveScatterAssets(assets);
+    const defs = descriptors.map(d => resolveScatterDefinition(d, registry, { isLiquid }));
+    // The global mottling slider applies to whatever the roster attached.
+    for (const def of defs) for (const tier of def.tiers) for (const v of tier) {
+      styleScatterTexture(v.material, { strength: scatterTextureStrength, enabled: scatterTextureStrength > 0 });
+    }
+    return defs;
+  }
+  {
+    const { assets, descriptors } = defaultScatter();
+    scatterAssetsState = assets;
+    scatterDescriptorsState = descriptors;
+    scatterDefinitions = resolveScatter(assets, descriptors, t => initialLiquid.size ? initialLiquid.has(t) : t === 5);
+  }
 
   const world = await HexWorld.create({
     container,
     map: new HexMap({ width: MAP_WIDTH, height: MAP_HEIGHT, featureLayerCount: FEATURE_LAYERS }),
     terrainDescriptors,
-    scatterDefinitions: [pineDefinition, rockDefinition, broadleafDefinition, bushDefinition],
+    scatterDefinitions,
     chunkSize:  CHUNK_SIZE,
     loadRadius: LOAD_RADIUS,
     geometryOptions: { colorMode: 'splat' },
@@ -535,10 +465,26 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
   let contoursOn = false;
   let riverFlowOn = false;
   let basinsOn    = false;
+  let roadNetsOn  = false;
   // Contour lines are one overlay entry per threshold; the count varies with
   // the map's range, so remember how many ids exist and hide the leftovers
   // when the count shrinks (hiding is cheap, the entries are reused on re-show).
   let contourIdCount = 0;
+
+  // Flow direction arrows, one per river cell, rebuilt with the flow tint.
+  // A custom mesh: the overlay layer draws hex fills and outlines, not
+  // shapes inside a cell. Two-tone vertex colours keep the arrow legible on
+  // both ends of the flow ramp.
+  const flowArrowsGeometry = new THREE.BufferGeometry();
+  const flowArrowsMesh = new THREE.Mesh(flowArrowsGeometry, new THREE.MeshBasicMaterial({
+    vertexColors: true, transparent: true, opacity: 0.7,
+    depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+  }));
+  flowArrowsMesh.frustumCulled = false;
+  // Above the flow tint (4), below the hover footprint (5).
+  flowArrowsMesh.renderOrder = 4.5;
+  flowArrowsMesh.visible = false;
+  world.scene.add(flowArrowsMesh);
 
   function refreshAnalysisOverlays(): void {
     const map = world.map;
@@ -583,8 +529,18 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
           cellColor: c => riverFlowColor(flow.get(key(c)) ?? 1, max),
           opacity: 0.85, walls: true, renderOrder: 4,
         });
+        const arrows = buildFlowArrows(map, world.layout, riverCells, {
+          tintFor:  (col, row) => riverFlowColor(flow.get(row * map.width + col) ?? 1, max),
+          surfaceY: (col, row) => (world.isWater(map.getTerrain(col, row))
+            ? map.getWaterSurface(col, row)
+            : map.getElevation(col, row)) * ELEVATION_SCALE,
+        });
+        flowArrowsGeometry.setAttribute('position', new THREE.BufferAttribute(arrows.positions, 3));
+        flowArrowsGeometry.setAttribute('color',    new THREE.BufferAttribute(arrows.colors, 3));
+        flowArrowsMesh.visible = arrows.count > 0;
       } else {
         world.overlays.set('analysis-river-flow', null);
+        flowArrowsMesh.visible = false;
       }
       if (basinsOn && !riverFlowOn) {
         const basins = riverBasins(map, t => world.isWater(t));
@@ -600,6 +556,25 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     } else {
       world.overlays.set('analysis-river-flow', null);
       world.overlays.set('analysis-basins', null);
+      flowArrowsMesh.visible = false;
+    }
+
+    // Road networks: the basin tint's counterpart for roads. Connected
+    // components over paired road edges, one hue each.
+    if (roadNetsOn) {
+      const nets = roadNetworks(map);
+      const roadCells: Array<{ col: number; row: number }> = [];
+      for (let row = 0; row < map.height; row++) {
+        for (let col = 0; col < map.width; col++) if (map.hasRoads(col, row)) roadCells.push({ col, row });
+      }
+      const order = new Map<number, number>();
+      for (const n of nets.values()) if (!order.has(n)) order.set(n, order.size);
+      world.overlays.set('analysis-road-networks', roadCells, {
+        cellColor: c => roadNetworkColor(order.get(nets.get(c.row * map.width + c.col) ?? -1) ?? 0),
+        opacity: 0.85, walls: true, renderOrder: 4,
+      });
+    } else {
+      world.overlays.set('analysis-road-networks', null);
     }
 
     const thresholds = contoursOn && ranges ? contourThresholds(ranges.all) : [];
@@ -789,6 +764,10 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     return mat;
   };
 
+  // Docks: a flat ring at the cell surface, one colour — they belong to no faction.
+  const portRingGeometry = new THREE.TorusGeometry(0.55, 0.06, 6, 24);
+  const portRingMaterial = new THREE.MeshBasicMaterial({ color: 0xffd166 });
+
   function rebuildUnitLayer(): void {
     unitGroup.clear();
     const map = world.map;
@@ -796,6 +775,13 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     for (let row = 0; row < map.height; row++) {
       for (let col = 0; col < map.width; col++) {
         if (!map.hasCellData(col, row)) continue;
+        if (isPort(map, col, row)) {
+          const ring = new THREE.Mesh(portRingGeometry, portRingMaterial);
+          const p = hexToWorld(world.layout, offsetToHex(col, row));
+          ring.rotation.x = Math.PI / 2;
+          ring.position.set(p.x, map.getElevation(col, row) * ELEVATION_SCALE + 0.06, p.z);
+          unitGroup.add(ring);
+        }
         const unit = unitAt(map, col, row);
         if (!unit) continue;
         const mesh = new THREE.Mesh(
@@ -867,6 +853,10 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     },
     setDrainageBasins(visible: boolean): void {
       basinsOn = visible;
+      refreshAnalysisOverlays();
+    },
+    setRoadNetworks(visible: boolean): void {
+      roadNetsOn = visible;
       refreshAnalysisOverlays();
     },
     refreshAnalysisOverlays,
@@ -1000,6 +990,11 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
       world.overlays.set('selection-preview', cells && cells.length > 0 ? cells : null,
         { color: subtract ? 0xff5544 : 0xffffff, opacity: 0.3 });
     },
+    setResourceHighlight(cells: Array<{ col: number; row: number }> | null): void {
+      // Under the hover fill (renderOrder 5) so the brush footprint stays readable on top.
+      world.overlays.set('resource-eligible', cells && cells.length > 0 ? cells : null,
+        { color: 0x7dff9a, opacity: 0.28, renderOrder: 4 });
+    },
     refreshSelectionHighlight: rebuildSelectionHighlight,
 
     // --- Territory ---
@@ -1017,6 +1012,18 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
     },
 
     setScatterVisible(visible: boolean): void { world.chunks.setScatterVisible(visible); },
+    get scatterAssets(): ScatterAssetDescriptor[] { return scatterAssetsState; },
+    get scatterDescriptors(): ScatterDescriptor[] { return scatterDescriptorsState; },
+    setScatter(assets: ScatterAssetDescriptor[], descriptors: ScatterDescriptor[]): void {
+      scatterAssetsState = assets;
+      scatterDescriptorsState = descriptors;
+      const old = scatterDefinitions;
+      scatterDefinitions = resolveScatter(assets, descriptors, t => world.isWater(t));
+      world.setScatterDefinitions(scatterDefinitions);
+      // The previous set's materials and registry geometry are nobody's now;
+      // the chunk meshes held clones and were disposed by the rebuild.
+      for (const def of old) for (const tier of def.tiers) for (const v of tier) { v.material.dispose(); v.geometry.dispose(); }
+    },
 
     setUnitsVisible(visible: boolean): void { unitGroup.visible = visible; },
 
@@ -1105,10 +1112,9 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
       world.wind.gustiness = gustiness;
     },
     setScatterTexture(strength: number): void {
-      // One strength across all four, but each keeps the scale it was attached
-      // with — the slider is "how much", not "how fine".
-      for (const [mat] of scatterTextured) {
-        styleScatterTexture(mat, { strength, enabled: strength > 0 });
+      scatterTextureStrength = strength;
+      for (const def of scatterDefinitions) for (const tier of def.tiers) for (const v of tier) {
+        styleScatterTexture(v.material, { strength, enabled: strength > 0 });
       }
     },
     // --- Minimap ---
@@ -1147,6 +1153,8 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
       liquidDescriptors: LiquidTypeDescriptor[];
       factions: FactionDescriptor[];
       resourceDescriptors: ResourceDescriptor[];
+      scatterAssets: ScatterAssetDescriptor[];
+      scatterDescriptors: ScatterDescriptor[];
       maps: Map<string, HexMap>;
     }> {
       const pkg = await loadHexPack(source, {
@@ -1162,6 +1170,8 @@ export async function initScene(container: HTMLElement, terrainDescriptors?: Ter
         liquidDescriptors:   pkg.liquidDescriptors,
         factions:            pkg.factions,
         resourceDescriptors: pkg.resourceDescriptors,
+        scatterAssets:       pkg.scatterAssets,
+        scatterDescriptors:  pkg.scatterDescriptors,
         maps:                pkg.maps,
       };
     },

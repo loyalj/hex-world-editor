@@ -1,6 +1,6 @@
-import { DEFAULT_WATER_TERRAIN_INDEX, hexToOffset, offsetNeighbor, offsetToHex } from '@loyalj/hex-world';
-import type { HexCoord, MapTransaction } from '@loyalj/hex-world';
-import { EDGE_DIRS, edgeBetween, floodRegion, hexLineDraw } from './hexPath.ts';
+import { DEFAULT_WATER_TERRAIN_INDEX, hexRange, hexToOffset, offsetNeighbor, offsetToHex } from '@loyalj/hex-world';
+import type { HexCoord, HexMap, MapTransaction } from '@loyalj/hex-world';
+import { EDGE_DIRS, edgeBetween, floodRegion, hexDistance, hexLineDraw, hexRound } from './hexPath.ts';
 import { setInfoTipText } from '../ui/infoTips.ts';
 import { wireOptionGroup } from '../ui/uiHelpers.ts';
 import { selectionOpFor } from '../selection.ts';
@@ -33,6 +33,118 @@ const RIVER_HINTS: Record<RiverMode, string> = {
 
 /** How many cells a dead-end lake may spread across the basin floor. */
 const MAX_LAKE_CELLS = 7;
+
+/** How far (in hexes) a new river's start reaches for an existing river's end. */
+const SNAP_RADIUS = 2;
+
+/**
+ * Where a new river gesture should really start: the nearest river end — a
+ * river cell with no outgoing edge, still on land — within {@link SNAP_RADIUS}
+ * of the pressed cell, so extending a river never leaves a one-cell gap and
+ * the old river flows on into the new one. Sources aren't candidates (a
+ * river drawn from one would turn it around), nor are ends that already
+ * reached water (that river is finished), nor cells the mask or locks
+ * refuse. Pressing on a river cell never snaps — that press IS connected.
+ */
+export function snapRiverStart(
+  map: HexMap,
+  isWater: (terrain: number) => boolean,
+  cell: CellPos,
+  allows: (col: number, row: number) => boolean,
+): CellPos {
+  if (!map.inBounds(cell.col, cell.row) || map.hasRiver(cell.col, cell.row)) return cell;
+  const centerHex = offsetToHex(cell.col, cell.row);
+  let best: CellPos | null = null;
+  let bestDist = Infinity;
+  for (const hex of hexRange(centerHex, SNAP_RADIUS)) {
+    const off = hexToOffset(hex);
+    if (!map.inBounds(off.col, off.row) || !allows(off.col, off.row)) continue;
+    if (!map.hasRiver(off.col, off.row) || map.getOutgoingRiverDir(off.col, off.row) >= 0) continue;
+    if (isWater(map.getTerrain(off.col, off.row))) continue;
+    const d = hexDistance(centerHex, hex);
+    if (d < bestDist) { bestDist = d; best = off; }
+  }
+  return best ?? cell;
+}
+
+/** A small seeded generator, so one drag's bends hold still while the preview follows the pointer. */
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Bend a line between two cells: control points every few cells along the
+ * straight line, each pushed sideways by between half of `amount` and
+ * `amount` cells on alternating sides (the distances rolled from `rng`),
+ * then joined leg by leg with `join` — the straight hex line, or the cost
+ * pathfinder. A bend that would leave the map stays on the line. Loops the
+ * legs fold into are cut, so the result visits each cell once; a line too
+ * short for a single bend comes back as `join(start, end)`.
+ */
+export function meanderPath(
+  map: { inBounds(col: number, row: number): boolean },
+  start: HexCoord, end: HexCoord, amount: number,
+  rng: () => number,
+  join: (a: HexCoord, b: HexCoord) => HexCoord[],
+): HexCoord[] {
+  const n = hexDistance(start, end);
+  const spacing = Math.max(3, amount * 2 + 1);
+  if (amount <= 0 || n < spacing + 2) return join(start, end);
+  // Axial → a plain 2D plane, where "sideways" is a perpendicular.
+  const SQ = Math.sqrt(3) / 2;
+  const toXY = (h: HexCoord): { x: number; y: number } => ({ x: h.q + h.r / 2, y: h.r * SQ });
+  const toHex = (x: number, y: number): HexCoord => {
+    const r = y / SQ;
+    return hexRound(x - r / 2, r);
+  };
+  const a = toXY(start), b = toXY(end);
+  const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const dir  = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
+  const perp = { x: -dir.y, y: dir.x };
+  let side = rng() < 0.5 ? -1 : 1;
+  const points: HexCoord[] = [start];
+  for (let i = spacing; i <= n - 2; i += spacing) {
+    const t = i / n;
+    const base = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    const swing = amount * (0.5 + 0.5 * rng()) * side;
+    side = -side;
+    const bent = toHex(base.x + perp.x * swing, base.y + perp.y * swing);
+    const off = hexToOffset(bent);
+    points.push(map.inBounds(off.col, off.row) ? bent : toHex(base.x, base.y));
+  }
+  points.push(end);
+  const path: HexCoord[] = [points[0]];
+  for (let i = 0; i < points.length - 1; i++) {
+    const leg = join(points[i], points[i + 1]);
+    for (let k = 1; k < leg.length; k++) path.push(leg[k]);
+  }
+  return dropLoops(path);
+}
+
+/** Cut every loop out of a path so no cell repeats — a river can't cross itself. */
+function dropLoops(path: HexCoord[]): HexCoord[] {
+  const out: HexCoord[] = [];
+  const at = new Map<string, number>();
+  for (const h of path) {
+    const key = `${h.q},${h.r}`;
+    const seen = at.get(key);
+    if (seen !== undefined) {
+      for (let i = out.length - 1; i > seen; i--) at.delete(`${out[i].q},${out[i].r}`);
+      out.length = seen + 1;
+      continue;
+    }
+    at.set(key, out.length);
+    out.push(h);
+  }
+  return out;
+}
 
 /**
  * Rivers touch water only at their ends: they may START one cell inside water
@@ -123,9 +235,11 @@ export function lakeAtSink(scene: TerrainView, path: HexCoord[]): CellPos[] {
  * River drawing in six modes: cost-pathed or straight drags (Shift erases
  * along the path), clicked waypoints, downhill tracing with a hover preview,
  * reversing a stem's flow, and an erase brush that detaches confluences
- * cleanly or removes a whole river at once. Every drawing mode can leave a
- * lake where its river ends on land. Alt+click in any mode selects the whole
- * river system under the cursor.
+ * cleanly or removes a whole river at once. New rivers snap their start to
+ * a nearby river end so extensions join up; the drag modes can bend their
+ * line into meanders; every drawing mode can carve a valley under its river
+ * and leave a lake where it ends on land. Alt+click in any mode selects the
+ * whole river system under the cursor.
  */
 export class RiverTool implements Tool {
   readonly id: ToolId = 'paint-river';
@@ -141,6 +255,15 @@ export class RiverTool implements Tool {
   private mode: RiverMode = 'path';
   private eraseScope: EraseScope = 'cell';
   private lakeAtSinks = false;
+  private readonly snapToggle = document.getElementById('river-snap') as HTMLInputElement;
+  /** How far, in cells, a bend may swing from the straight line; 0 draws it straight. */
+  private meander = 0;
+  /** Depth to dig along a newly drawn river; 0 leaves the ground alone. */
+  private carve = 0;
+  /** One drag's bends: a seed rolled at press so the preview holds still under the pointer. */
+  private meanderSeed = 0;
+  /** Source of the meander seeds; tests swap in a deterministic one. */
+  protected rng: () => number = Math.random;
   private down = false;
   private erasing = false;
   private pathStart: CellPos | null = null;
@@ -163,15 +286,33 @@ export class RiverTool implements Tool {
     this.costOptions = costOptions;
     const modeHeader = document.getElementById('river-mode-header')!;
     const eraseScopeGroup = document.getElementById('river-erase-scope-group') as HTMLElement;
-    const lakeRow = document.getElementById('river-lake-row') as HTMLElement;
+    const lakeRow    = document.getElementById('river-lake-row')    as HTMLElement;
+    const snapRow    = document.getElementById('river-snap-row')    as HTMLElement;
+    const meanderRow = document.getElementById('river-meander-row') as HTMLElement;
+    const carveRow   = document.getElementById('river-carve-row')   as HTMLElement;
     wireOptionGroup('#river-mode-group .brush-btn', btn => {
       if (this.waypointActive) this.cancelWaypoints();
       this.clearHover();
       this.mode = btn.dataset['riverMode'] as RiverMode;
       setInfoTipText(modeHeader, RIVER_HINTS[this.mode] ?? '');
-      eraseScopeGroup.classList.toggle('hidden', this.mode !== 'erase');
-      lakeRow.classList.toggle('hidden', this.mode === 'reverse' || this.mode === 'erase');
+      const m = this.mode;
+      const draws = m !== 'reverse' && m !== 'erase';
+      eraseScopeGroup.classList.toggle('hidden', m !== 'erase');
+      lakeRow.classList.toggle('hidden', !draws);
+      carveRow.classList.toggle('hidden', !draws);
+      snapRow.classList.toggle('hidden', !(m === 'path' || m === 'straight' || m === 'waypoint'));
+      meanderRow.classList.toggle('hidden', !(m === 'path' || m === 'straight'));
       ctx.updateCursor();
+    });
+    const meanderEl  = document.getElementById('river-meander')       as HTMLInputElement;
+    const meanderVal = document.getElementById('river-meander-value') as HTMLElement;
+    meanderEl.addEventListener('input', () => {
+      this.meander = Math.max(0, parseInt(meanderEl.value, 10) || 0);
+      meanderVal.textContent = this.meander === 0 ? 'off' : `±${this.meander} cell${this.meander === 1 ? '' : 's'}`;
+      if (this.down && this.pathStart) this.updatePreview();
+    });
+    (document.getElementById('river-carve') as HTMLInputElement).addEventListener('input', e => {
+      this.carve = Math.max(0, Math.min(32, parseInt((e.target as HTMLInputElement).value, 10) || 0));
     });
     wireOptionGroup('#river-erase-scope-group .scatter-type-btn', btn => {
       this.eraseScope = btn.dataset['eraseScope'] as EraseScope;
@@ -201,13 +342,17 @@ export class RiverTool implements Tool {
       this.clearHover();
       this.down = true;
       this.erasing = e.shiftKey;
-      this.pathStart = { col: cell.col, row: cell.row };
+      // Erase drags never snap — pulling an erase onto a river end you
+      // didn't press would eat the very river you were working next to.
+      this.pathStart = this.erasing ? { col: cell.col, row: cell.row } : this.snapStart(cell);
       this.currentPath = null;
-      scene.setPathPreview([offsetToHex(cell.col, cell.row)], this.erasing);
+      this.meanderSeed = Math.floor(this.rng() * 0x7fffffff);
+      scene.setPathPreview([offsetToHex(this.pathStart.col, this.pathStart.row)], this.erasing);
       return;
     }
     if (this.mode === 'waypoint') {
-      this.waypoints.push({ col: cell.col, row: cell.row });
+      const start = this.waypoints.length === 0 ? this.snapStart(cell) : cell;
+      this.waypoints.push({ col: start.col, row: start.row });
       this.waypointActive = true;
       this.previewWaypoints(null);
       return;
@@ -295,6 +440,12 @@ export class RiverTool implements Tool {
     this.commitErase();
     this.cancelDrag();
     this.clearHover();
+  }
+
+  private snapStart(cell: CellPos): CellPos {
+    if (!this.snapToggle.checked) return { col: cell.col, row: cell.row };
+    const scene = this.ctx.scene;
+    return snapRiverStart(scene.map, t => scene.isWater(t), cell, (col, row) => scene.editable(col, row));
   }
 
   private cancelDrag(): void {
@@ -453,9 +604,21 @@ export class RiverTool implements Tool {
       this.previewLake(null);
       return;
     }
-    let path = this.mode === 'straight'
-      ? hexLineDraw(startHex, endHex)
-      : computeCostPath(scene, startHex, endHex, this.costOptions(), endHex);
+    let path: HexCoord[] | null;
+    if (this.meander > 0 && !this.erasing) {
+      // Legs are joined the way the mode would draw the whole line; a path
+      // leg that finds no route falls back to the straight hex line, so the
+      // preview never lies about what the release would lay.
+      const join = this.mode === 'straight'
+        ? hexLineDraw
+        : (a: HexCoord, b: HexCoord): HexCoord[] =>
+          computeCostPath(scene, a, b, this.costOptions(), endHex) ?? hexLineDraw(a, b);
+      path = meanderPath(scene.map, startHex, endHex, this.meander, mulberry32(this.meanderSeed), join);
+    } else {
+      path = this.mode === 'straight'
+        ? hexLineDraw(startHex, endHex)
+        : computeCostPath(scene, startHex, endHex, this.costOptions(), endHex);
+    }
     if (path && !this.erasing) path = trimRiverPathAtWater(scene, path);
     this.currentPath = path;
     scene.setPathPreview(path ?? [startHex], this.erasing);
@@ -584,6 +747,7 @@ export class RiverTool implements Tool {
         }
         chunks.markDirty(off.col, off.row);
       }
+      if (this.carve > 0) this.carveValley(tx, path);
       const water = this.lakeTerrain();
       for (const { col, row } of lake) {
         if (!scene.editable(col, row)) continue;
@@ -593,6 +757,49 @@ export class RiverTool implements Tool {
     }
 
     this.ctx.commitEdit(tx.commit());
+    // Territory borders and resource icons sit on the cell surface, so a
+    // carved valley moves the ground under them.
+    if (!erasing && this.carve > 0) scene.refreshGameplayLayers();
+  }
+
+  /**
+   * Dig the valley under a new river: every land cell on the path drops by
+   * the carve depth, and the land beside it — not river, not on the path —
+   * by half, so the channel sits in a V rather than a slot. Masked cells
+   * keep their height; the range floor is the map's own.
+   */
+  private carveValley(tx: MapTransaction, path: HexCoord[]): void {
+    const scene = this.ctx.scene;
+    const { map, chunks } = scene;
+    const onPath = new Set<number>();
+    const lower = (col: number, row: number, by: number): void => {
+      if (!scene.editable(col, row) || scene.isWater(map.getTerrain(col, row))) return;
+      const prev = map.getElevation(col, row);
+      const next = Math.max(-128, prev - by);
+      if (next === prev) return;
+      tx.setElevation(col, row, next);
+      chunks.markDirty(col, row);
+    };
+    for (const h of path) {
+      const off = hexToOffset(h);
+      if (!map.inBounds(off.col, off.row)) continue;
+      onPath.add(this.cellKey(off.col, off.row));
+      lower(off.col, off.row, this.carve);
+    }
+    const sides = Math.floor(this.carve / 2);
+    if (sides === 0) return;
+    const done = new Set<number>();
+    for (const h of path) {
+      const off = hexToOffset(h);
+      for (let e = 0; e < 6; e++) {
+        const nb = offsetNeighbor(off.col, off.row, EDGE_DIRS[e]);
+        if (!map.inBounds(nb.col, nb.row)) continue;
+        const key = this.cellKey(nb.col, nb.row);
+        if (onPath.has(key) || done.has(key) || map.hasRiver(nb.col, nb.row)) continue;
+        done.add(key);
+        lower(nb.col, nb.row, sides);
+      }
+    }
   }
 
   private eraseRiverAt(col: number, row: number): void {
@@ -647,7 +854,11 @@ export class RiverTool implements Tool {
       return `${base} · stem of ${this.hoverPath.length} cells`;
     }
     if (this.mode === 'erase' && this.eraseScope === 'river') return `${base} · whole river`;
-    if (this.pendingLake.length > 0) return `${base} · ends on land · lake of ${this.pendingLake.length}`;
-    return base;
+    const shaping = [
+      (this.mode === 'path' || this.mode === 'straight') && this.meander > 0 ? ` · meander ±${this.meander}` : '',
+      this.mode !== 'reverse' && this.carve > 0 ? ` · carve ${this.carve}` : '',
+    ].join('');
+    if (this.pendingLake.length > 0) return `${base}${shaping} · ends on land · lake of ${this.pendingLake.length}`;
+    return `${base}${shaping}`;
   }
 }

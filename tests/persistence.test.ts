@@ -5,6 +5,7 @@ import { initPersistence } from '../src/ui/persistence.ts';
 import type { PersistenceApi } from '../src/ui/persistence.ts';
 import type { PaletteApi } from '../src/ui/palette.ts';
 import type { RostersApi } from '../src/ui/rosters.ts';
+import type { ScatterBuilderApi } from '../src/ui/scatterBuilder.ts';
 import type { EnvironmentTool } from '../src/tools/environmentTool.ts';
 import type { FogTool } from '../src/tools/fogTool.ts';
 import type { SceneApi } from '../src/scene.ts';
@@ -60,6 +61,7 @@ beforeEach(() => {
     history,
     palette,
     rosters,
+    scatter: { assets: [], descriptors: [], applyLoaded: vi.fn(), open() {} } as unknown as ScatterBuilderApi,
     environment: { snapshot: () => ENV_STATE, restore: envRestore } as unknown as EnvironmentTool,
     fog:         { snapshot: () => FOG_STATE, restore: fogRestore } as unknown as FogTool,
     pluginIds: ['fbm'],

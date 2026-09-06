@@ -37,41 +37,58 @@ shape and climate options.
   straight line from where the last stroke ended, and the status strip
   reports how many cells a click would actually change.
 - Elevation sculpting: raise/lower, smooth, flatten, noise, set-absolute,
-  slope ramps, and erosion, with a range lock and contour snapping. The same
+  terraces (heights snapped to a step), slope ramps of any width with linear
+  or eased profiles, and erosion, with a range lock and contour snapping. The same
   shaped, sized brush as the terrain tool, or a fill scope that applies the
   mode across a region matching the clicked cell's elevation (within a
-  tolerance) or terrain, connected or map-wide, with a hover preview.
+  tolerance) or terrain, connected or map-wide, or across the whole
+  selection whatever it holds, with a hover preview.
 - Rivers and roads with pathfinding, straight, waypoint, and freehand modes;
   rivers can trace downhill with a hover preview, leave a lake wherever a
   drawn or traced river ends on land, reverse a stem's flow, and be erased
-  cell by cell or a whole river at once. Alt+click selects a whole river system; a River Check
-  dialog lists uphill runs, loops, dead ends, dangling edges, and low
-  sources and jumps the camera to each. Roads can weigh terrain and
-  elevation costs.
+  cell by cell or a whole river at once. New rivers and roads snap their
+  start to a nearby end so extensions join up; rivers can meander within a
+  chosen swing and carve a valley under themselves as they are drawn.
+  Alt+click selects a whole river system or road network; River Check and
+  Road Check dialogs list what has gone wrong (uphill runs, loops, dead
+  ends, dangling edges, low sources; roads on water, cliff crossings, short
+  spurs, isolated fragments) and jump the camera to each. Roads can weigh
+  terrain and elevation costs.
 - Scatter layers (pines, broadleaf, bushes, rocks) painted by density with
   elevation and terrain filters.
 - Custom rosters: define your own terrain types, liquids (with flow, waves,
   foam, and glow), factions, and resource types — all saved with the map.
 
-**Selection & masking** — pointer, magic wand (terrain or elevation match,
-with live region preview), marquee shapes (rectangle, circle, hexagon,
-triangle), and lasso. Shift adds, Alt removes, Shift+Alt intersects; the
-selection masks every other tool. Terrain locks additionally protect whole
-terrain types from edits.
+**Selection & masking** — pointer with the shaped, sized brush (solid, ring,
+spray), magic wand (terrain or elevation match, with live region preview),
+marquee shapes (rectangle, circle, hexagon, triangle), and lasso. Shift
+adds, Alt removes, Shift+Alt intersects; Grow, Shrink, Border, and Invert
+reshape the result; the selection masks every other tool. Terrain locks
+additionally protect whole terrain types from edits.
 
-**Gameplay layers** — faction territory painting with border overlays,
-resource placement with per-type placement rules, one-unit-per-cell armies
-and ships, and paintable fog of war.
+**Gameplay layers** — faction territory painting with border overlays: brush
+or a fill bounded by rivers, roads, coast, and other factions, a one-ring
+grow under the same borders, transfer of the selection to a faction,
+Alt+click to sample a faction and right-click to release; a Holdings panel
+in the right column counts each faction's cells, with click-to-select.
+Resource placement with per-type placement rules: the status strip names
+the rule refusing the cell under the cursor, a toggle tints every cell the
+chosen type may go on, a scatter drops N at random across the selection
+(rules and spacing respected), Alt+click samples the resource under the
+cursor, and a Resources panel counts each type with click-to-select.
+One-unit-per-cell armies and ships, and paintable fog of war.
 
 **Environment** — time of day with an animated cycle, rain and snow, wind
 with gusts that sway the vegetation, seasons (continental or whole-map) with
-snow accumulation and freezing liquids, god rays, and cloud shadows.
+snow accumulation and freezing liquids, god rays, and cloud shadows, in a
+panel of folding sections that remember which stand open.
 
 **Editor chrome** — undo/redo history, minimap with viewport tracking, cell
 inspector (with river flow, tributaries, and destination), a Terrains panel
 with per-terrain cell counts (click a row to select every cell of that
 terrain), map analysis overlays (elevation heatmap, contour lines, river
-flow, drainage basins), RTS and free cameras, and an app-wide settings dialog with
+flow, drainage basins, road networks), RTS and free cameras, and an app-wide
+settings dialog with
 themable UI: six presets plus adjustable accent color, dark/light base, and
 corner radius.
 

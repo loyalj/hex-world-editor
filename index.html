@@ -73,6 +73,7 @@
             <div class="menu-divider"></div>
             <button class="menu-item" id="add-terrain-menu-btn">Terrain types…</button>
             <button class="menu-item" id="liquid-menu-btn">Liquid types…</button>
+            <button class="menu-item" id="scatter-menu-btn">Scatter types…</button>
             <button class="menu-item" id="factions-menu-btn">Factions…</button>
             <button class="menu-item" id="resources-menu-btn">Resource types…</button>
           </div>
@@ -89,6 +90,7 @@
                 <button class="menu-item" id="toggle-contours-btn">Contour lines <span id="contours-check" class="menu-check hidden">&#10003;</span></button>
                 <button class="menu-item" id="toggle-riverflow-btn">River flow <span id="riverflow-check" class="menu-check hidden">&#10003;</span></button>
                 <button class="menu-item" id="toggle-basins-btn">Drainage basins <span id="basins-check" class="menu-check hidden">&#10003;</span></button>
+                <button class="menu-item" id="toggle-roadnets-btn">Road networks <span id="roadnets-check" class="menu-check hidden">&#10003;</span></button>
               </div>
             </div>
             <div class="menu-submenu">
@@ -125,6 +127,8 @@
                 <button class="menu-item" id="toggle-inspector-btn">Inspector <span id="inspector-check" class="menu-check">&#10003;</span></button>
                 <button class="menu-item" id="toggle-locks-btn">Locks <span id="locks-check" class="menu-check hidden">&#10003;</span></button>
                 <button class="menu-item" id="toggle-terrains-btn">Terrains <span id="terrains-check" class="menu-check hidden">&#10003;</span></button>
+                <button class="menu-item" id="toggle-holdings-btn">Holdings <span id="holdings-check" class="menu-check hidden">&#10003;</span></button>
+                <button class="menu-item" id="toggle-resource-stats-btn">Resources <span id="resource-stats-check" class="menu-check hidden">&#10003;</span></button>
               </div>
             </div>
           </div>
@@ -176,7 +180,7 @@
           </div>
 
           <div id="drawer-body">
-            <div id="selection-options" class="tool-panel">
+            <div id="selection-options" class="tool-panel tool-panel--floored">
               <div class="group-header">Mode</div>
               <div class="brush-group" id="selection-mode-group">
                 <button class="brush-btn active" data-select-mode="pointer" title="Pointer — click a cell to select it">
@@ -228,12 +232,21 @@
                 </div>
               </div>
               <div id="pointer-brush-section">
-                <div class="group-header">Brush</div>
-                <div class="brush-group" id="selection-brush-group">
-                  <button class="brush-btn active" data-brush="0" title="1 cell"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"  fill="currentColor"/></svg></button>
-                  <button class="brush-btn"        data-brush="1" title="7 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"  fill="currentColor"/></svg></button>
-                  <button class="brush-btn"        data-brush="2" title="19 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"  fill="currentColor"/></svg></button>
-                  <button class="brush-btn"        data-brush="3" title="37 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="currentColor"/></svg></button>
+                <div class="group-header" data-tip="Solid selects the whole footprint. Ring selects only its outer band. Spray selects a random share of it. [ and ] change the size.">Brush</div>
+                <div class="segmented" id="selection-shape-group">
+                  <button class="scatter-type-btn active" data-brush-shape="solid" title="Solid — the whole footprint">Solid</button>
+                  <button class="scatter-type-btn" data-brush-shape="ring" title="Ring — only the footprint's outer band">Ring</button>
+                  <button class="scatter-type-btn" data-brush-shape="spray" title="Spray — a random share of the footprint">Spray</button>
+                </div>
+                <div class="slider-row slider-row--labeled">
+                  <span class="slider-label">Size</span>
+                  <input type="range" id="selection-brush-size" min="0" max="12" step="1" value="0" autocomplete="off" />
+                  <span class="slider-value" id="selection-brush-size-value">1 cell</span>
+                </div>
+                <div class="slider-row slider-row--labeled hidden" id="selection-density-row">
+                  <span class="slider-label">Density</span>
+                  <input type="range" id="selection-density" min="5" max="100" step="5" value="50" autocomplete="off" />
+                  <span class="slider-value" id="selection-density-value">50%</span>
                 </div>
               </div>
               <div id="wand-match-section" class="hidden">
@@ -251,12 +264,13 @@
                   <input type="number" id="wand-tolerance" value="0" min="0" max="127" autocomplete="off" />
                 </div>
               </div>
-              <div class="group-header" id="selection-actions-header" data-tip="Shift+click adds, Alt+click or right-click removes, Shift+Alt+click keeps only the overlap, Esc clears.">Selection</div>
+              <div class="group-header group-header--floor" data-tip="Shift+click adds, Alt+click or right-click removes, Shift+Alt+click keeps only the overlap, Esc clears.">Selection</div>
               <div class="option-list">
                 <button id="selection-all-btn" title="Select every cell (Ctrl+A)">Select all</button>
                 <button id="selection-invert-btn" title="Swap selected and unselected cells (Ctrl+I)">Invert</button>
                 <button id="selection-grow-btn" title="Expand the selection by one ring of neighbours">Grow</button>
                 <button id="selection-shrink-btn" title="Remove the selection's boundary cells">Shrink</button>
+                <button id="selection-border-btn" title="Keep only the selection's boundary cells — its outline, one cell thick">Border</button>
                 <button id="selection-clear-btn" title="Deselect everything (Esc)">Clear selection</button>
               </div>
             </div>
@@ -299,19 +313,20 @@
                 </div>
               </div>
               <div id="terrain-fill-group" class="hidden">
-                <div class="group-header" data-tip="Exact fills cells of the clicked terrain. Category treats every solid, or every liquid, as one terrain. Custom fills the terrains ticked below, wherever you click. Elevation fills cells within the tolerance of the clicked cell's height, whatever their terrain.">Fill matches</div>
+                <div class="group-header" data-tip="Exact fills cells of the clicked terrain. Category treats every solid, or every liquid, as one terrain. Custom fills the terrains ticked below, wherever you click. Elevation fills cells within the tolerance of the clicked cell's height, whatever their terrain. Selection fills every selected cell, whatever it holds, wherever you click.">Fill matches</div>
                 <div class="segmented" id="terrain-fill-match-group">
                   <button class="scatter-type-btn active" data-fill-match="exact" title="Cells of the clicked cell's terrain">Exact</button>
                   <button class="scatter-type-btn" data-fill-match="category" title="Any solid if you click solid ground; any liquid if you click liquid">Category</button>
                   <button class="scatter-type-btn" data-fill-match="set" title="The terrains ticked below">Custom</button>
                   <button class="scatter-type-btn" data-fill-match="elevation" title="Cells near the clicked cell's elevation">Elevation</button>
+                  <button class="scatter-type-btn" data-fill-match="selection" title="Every selected cell, whatever it holds">Selection</button>
                 </div>
                 <div id="terrain-fill-set" class="terrain-filter-group hidden"></div>
                 <div id="terrain-fill-tolerance-row" class="field hidden">
                   <span>Tolerance &plusmn;</span>
                   <input type="number" id="terrain-fill-tolerance" value="0" min="0" max="255" autocomplete="off" />
                 </div>
-                <label class="toggle-row">
+                <label class="toggle-row" id="terrain-fill-contiguous-row">
                   <span class="tip-host" data-tip="On fills only the connected region under the cursor; off fills every matching cell on the map.">Contiguous</span>
                   <input type="checkbox" id="terrain-fill-contiguous" checked />
                 </label>
@@ -326,6 +341,7 @@
                 <button class="density-btn" data-elev-mode="flatten">Flatten</button>
                 <button class="density-btn" data-elev-mode="noise">Noise</button>
                 <button class="density-btn" data-elev-mode="set-absolute">Set absolute</button>
+                <button class="density-btn" data-elev-mode="terrace" title="Snap heights to the nearest multiple of a step">Terrace</button>
                 <button class="density-btn" data-elev-mode="slope">Slope ramp</button>
                 <button class="density-btn" data-elev-mode="erosion">Erosion</button>
               </div>
@@ -337,6 +353,24 @@
               <div id="elev-set-target-row" class="field hidden">
                 <span>Target elevation</span>
                 <input type="number" id="elev-set-target" value="0" min="-128" max="127" autocomplete="off" />
+              </div>
+              <div id="elev-terrace-row" class="field hidden">
+                <span class="tip-host" data-tip="Every touched cell moves to the nearest multiple of this step, so a slope becomes a flight of level steps. Fill scope terraces a whole region at once.">Terrace every</span>
+                <input type="number" id="elev-terrace-step" value="4" min="1" max="64" autocomplete="off" />
+              </div>
+              <div id="elev-ramp-group" class="hidden">
+                <div class="group-header" data-tip="Width widens the ramp either side of the dragged line; every cell in the band takes the height of the nearest line cell. The profile shapes the climb: linear is a straight grade, smooth eases both ends, ease in starts gently and steepens, ease out climbs first and levels off.">Ramp</div>
+                <div class="slider-row slider-row--labeled">
+                  <span class="slider-label">Width</span>
+                  <input type="range" id="elev-ramp-width" min="0" max="6" step="1" value="0" autocomplete="off" />
+                  <span class="slider-value" id="elev-ramp-width-value">1 cell</span>
+                </div>
+                <div class="segmented" id="elev-ramp-profile-group">
+                  <button class="scatter-type-btn active" data-ramp-profile="linear" title="A straight grade">Linear</button>
+                  <button class="scatter-type-btn" data-ramp-profile="smooth" title="Eases at both ends">Smooth</button>
+                  <button class="scatter-type-btn" data-ramp-profile="ease-in" title="Starts gently, steepens">Ease in</button>
+                  <button class="scatter-type-btn" data-ramp-profile="ease-out" title="Climbs first, levels off">Ease out</button>
+                </div>
               </div>
               <div class="group-header" id="elev-step-header">Step</div>
               <div class="brush-group" id="elev-step-group">
@@ -396,16 +430,17 @@
                 </div>
               </div>
               <div id="elev-fill-group" class="hidden">
-                <div class="group-header" data-tip="Elevation fills cells within the tolerance of the clicked cell's height. Terrain fills cells sharing its terrain.">Fill matches</div>
+                <div class="group-header" data-tip="Elevation fills cells within the tolerance of the clicked cell's height. Terrain fills cells sharing its terrain. Selection fills every selected cell, whatever it holds, wherever you click.">Fill matches</div>
                 <div class="segmented" id="elev-fill-match-group">
                   <button class="scatter-type-btn active" data-fill-match="elevation" title="Cells near the clicked cell's elevation">Elevation</button>
                   <button class="scatter-type-btn" data-fill-match="terrain" title="Cells sharing the clicked cell's terrain">Terrain</button>
+                  <button class="scatter-type-btn" data-fill-match="selection" title="Every selected cell, whatever it holds">Selection</button>
                 </div>
                 <div id="elev-fill-tolerance-row" class="field">
                   <span>Tolerance &plusmn;</span>
                   <input type="number" id="elev-fill-tolerance" value="0" min="0" max="255" autocomplete="off" />
                 </div>
-                <label class="toggle-row">
+                <label class="toggle-row" id="elev-fill-contiguous-row">
                   <span class="tip-host" data-tip="On fills only the connected region under the cursor; off fills every matching cell on the map.">Contiguous</span>
                   <input type="checkbox" id="elev-fill-contiguous" checked />
                 </label>
@@ -413,12 +448,9 @@
             </div>
 
             <div id="scatter-options" class="tool-panel hidden">
-              <div class="group-header">Type</div>
-              <div class="segmented" id="scatter-type-group">
-                <button class="scatter-type-btn active" data-scatter-layer="0" title="Conifers — keep their needles through winter">Pines</button>
-                <button class="scatter-type-btn"        data-scatter-layer="2" title="Deciduous — turn gold in autumn and go bare in winter">Broadleaf</button>
-                <button class="scatter-type-btn"        data-scatter-layer="3" title="Low scrub — turns with the season like the broadleaf">Bushes</button>
-                <button class="scatter-type-btn"        data-scatter-layer="1">Rocks</button>
+              <div class="group-header" data-tip="Each type paints density on its own feature layer. Compose new types in the Scatter Builder.">Type</div>
+              <div class="option-list option-list--single" id="scatter-type-group">
+                <!-- populated by ScatterTool.refreshTypes() -->
               </div>
               <div class="group-header">Mode</div>
               <div class="segmented" id="scatter-mode-group">
@@ -449,7 +481,7 @@
               </div>
             </div>
 
-            <div id="river-options" class="tool-panel hidden">
+            <div id="river-options" class="tool-panel tool-panel--floored hidden">
               <div class="group-header" id="river-mode-header" data-tip="Hold and drag to place. Shift to erase. Esc cancels.">Mode</div>
               <div class="brush-group" id="river-mode-group">
                 <button class="brush-btn active" data-river-mode="path" title="Pathfinding">
@@ -504,14 +536,27 @@
                 <span class="tip-host" data-tip="When a river ends on land instead of reaching water, turn the ground around its last cell into a lake so it has somewhere to end. Applies to drags, waypoints, and downhill traces.">Lake at dead ends</span>
                 <input type="checkbox" id="river-lake-at-sinks" />
               </label>
-              <div class="group-header" id="river-actions-header">Rivers</div>
+              <label class="toggle-row" id="river-snap-row">
+                <span class="tip-host" data-tip="Start a new river at a nearby river's end (within 2 cells) instead of leaving a gap, so the old river flows on into the new one. Sources and rivers that already reach water are left alone.">Snap to river ends</span>
+                <input type="checkbox" id="river-snap" checked />
+              </label>
+              <div class="slider-row slider-row--labeled" id="river-meander-row">
+                <span class="slider-label tip-host" data-tip="Bends the line into a bounded wobble so long rivers stop reading as ruler lines. The number is how far, in cells, a bend may swing from the straight line; each drag rolls its own bends and the preview shows them.">Meander</span>
+                <input type="range" id="river-meander" min="0" max="4" step="1" value="0" autocomplete="off" />
+                <span class="slider-value" id="river-meander-value">off</span>
+              </div>
+              <div class="field" id="river-carve-row">
+                <span class="tip-host" data-tip="Lower the ground along a newly drawn river by this much, and the cells beside it by half, so the river digs its own valley as it is drawn. 0 leaves the ground alone.">Carve valley by</span>
+                <input type="number" id="river-carve" value="0" min="0" max="32" autocomplete="off" />
+              </div>
+              <div class="group-header group-header--floor">Rivers</div>
               <div class="option-list">
                 <button id="river-audit-btn" title="List uphill runs, loops, dead ends, dangling edges, and low sources">Check rivers…</button>
                 <button id="river-clear-btn" title="Remove every river in the selection, or on the whole map with nothing selected">Clear rivers</button>
               </div>
             </div>
 
-            <div id="road-options" class="tool-panel hidden">
+            <div id="road-options" class="tool-panel tool-panel--floored hidden">
               <div class="group-header" id="road-mode-header" data-tip="Hold and drag to place. Shift to erase. Esc cancels.">Mode</div>
               <div class="brush-group" id="road-mode-group">
                 <button class="brush-btn active" data-road-mode="path" title="Pathfinding">
@@ -568,123 +613,156 @@
                   <input type="checkbox" id="road-cost-roads" />
                 </label>
               </div>
+              <div class="group-header group-header--floor">Roads</div>
+              <div class="option-list option-list--single">
+                <button id="road-audit-btn" title="List dangling edges, roads on water, cliff crossings, short spurs, and isolated fragments">Check roads…</button>
+              </div>
             </div>
 
             <div id="environment-options" class="tool-panel hidden">
-              <div class="group-header" data-tip="The lower slider sets seconds of real time per full day/night cycle.">Time of day</div>
-              <div class="slider-row">
-                <input type="range" id="tod-slider" min="0" max="1435" step="5" value="720" autocomplete="off" />
-                <span class="slider-value" id="tod-value">12:00</span>
-              </div>
-              <div class="option-list" id="tod-preset-group">
-                <button data-tod="330">Dawn</button>
-                <button class="active" data-tod="720">Noon</button>
-                <button data-tod="1140">Dusk</button>
-                <button data-tod="0">Midnight</button>
-              </div>
-              <label class="toggle-row">
-                <span>Animate cycle</span>
-                <input type="checkbox" id="tod-animate" />
-              </label>
-              <div class="slider-row">
-                <input type="range" id="day-length" min="15" max="600" step="15" value="120" autocomplete="off" />
-                <span class="slider-value" id="day-length-value">120s</span>
-              </div>
+              <details class="env-section" data-section="time" open>
+                <summary class="group-header" data-tip="The lower slider sets seconds of real time per full day/night cycle.">Time of day</summary>
+                <div class="slider-row">
+                  <input type="range" id="tod-slider" min="0" max="1435" step="5" value="720" autocomplete="off" />
+                  <span class="slider-value" id="tod-value">12:00</span>
+                </div>
+                <div class="option-list" id="tod-preset-group">
+                  <button data-tod="330">Dawn</button>
+                  <button class="active" data-tod="720">Noon</button>
+                  <button data-tod="1140">Dusk</button>
+                  <button data-tod="0">Midnight</button>
+                </div>
+                <label class="toggle-row">
+                  <span>Animate cycle</span>
+                  <input type="checkbox" id="tod-animate" />
+                </label>
+                <div class="slider-row">
+                  <input type="range" id="day-length" min="15" max="600" step="15" value="120" autocomplete="off" />
+                  <span class="slider-value" id="day-length-value">120s</span>
+                </div>
+              </details>
 
-              <div class="group-header">Weather</div>
-              <div class="segmented" id="weather-type-group">
-                <button class="active" data-weather="clear">Clear</button>
-                <button data-weather="rain">Rain</button>
-                <button data-weather="snow">Snow</button>
-              </div>
-              <div class="group-header">Intensity</div>
-              <div class="slider-row">
-                <input type="range" id="weather-intensity" min="0" max="100" step="5" value="100" autocomplete="off" />
-                <span class="slider-value" id="weather-intensity-value">100%</span>
-              </div>
-              <div class="group-header" data-tip="One wind for the whole scene, in world units per second. It drifts the cloud deck at exactly this rate and everything else scales off it: the trees and bushes bend, the rain slants, and the ripple pattern marches across open water. Rivers ignore it — their direction is their channel's. Around 3–4 is where the sway reads clearly; below about 1 the scene looks still.">Wind speed</div>
-              <div class="slider-row">
-                <input type="range" id="wind-speed" min="0" max="8" step="0.2" value="3.4" autocomplete="off" />
-                <span class="slider-value" id="wind-speed-value">3.4</span>
-              </div>
-              <div class="group-header" data-tip="The heading the wind blows toward, not the one it comes from. Turns the clouds, the rain slant, the way plants lean, and the drift of the water all together.">Wind direction</div>
-              <div class="slider-row">
-                <input type="range" id="wind-dir" min="0" max="355" step="5" value="30" autocomplete="off" />
-                <span class="slider-value" id="wind-dir-value">30°</span>
-              </div>
-              <div class="group-header" data-tip="How far gusts swing the wind either side of its sustained speed, on a roughly seven-second cycle. Gusts reach the plants and the rain but deliberately not the cloud deck — a whole overcast sky doesn't surge in a two-second squall — and they travel across the map as a wave, so you watch one cross a wood tree by tree rather than every tree leaning at once. It is a percentage of the speed above, so at a low wind it has little to work with.">Wind gusts</div>
-              <div class="slider-row">
-                <input type="range" id="wind-gust" min="0" max="100" step="5" value="35" autocomplete="off" />
-                <span class="slider-value" id="wind-gust-value">35%</span>
-              </div>
-              <label class="toggle-row">
-                <span>Cloud shadows</span>
-                <input type="checkbox" id="weather-clouds" checked />
-              </label>
+              <details class="env-section" data-section="weather" open>
+                <summary class="group-header">Weather</summary>
+                <div class="segmented" id="weather-type-group">
+                  <button class="active" data-weather="clear">Clear</button>
+                  <button data-weather="rain">Rain</button>
+                  <button data-weather="snow">Snow</button>
+                </div>
+                <div class="group-header">Intensity</div>
+                <div class="slider-row">
+                  <input type="range" id="weather-intensity" min="0" max="100" step="5" value="100" autocomplete="off" />
+                  <span class="slider-value" id="weather-intensity-value">100%</span>
+                </div>
+                <label class="toggle-row">
+                  <span>Cloud shadows</span>
+                  <input type="checkbox" id="weather-clouds" checked />
+                </label>
+              </details>
 
-              <div class="group-header" data-tip="Fine procedural mottling on the trees, bushes and rocks. Flat-shaded low-poly plants sit next to ground that carries real texture, and a large facet of one solid colour reads as plastic beside it — this varies the brightness on a scale finer than a facet, so each plane stops being perfectly uniform while its edges stay as crisp as they were. It is not a lighting change and does not soften the low-poly look. The number is peak-to-peak brightness swing, so 18% is about ±9%. 0 switches it off; the top of the range is there for judging the effect rather than shipping at it — somewhere past 30% a canopy stops reading as leaves and starts reading as mould.">Scatter texture</div>
-              <div class="slider-row">
-                <input type="range" id="scatter-texture" min="0" max="80" step="2" value="18" autocomplete="off" />
-                <span class="slider-value" id="scatter-texture-value">18%</span>
-              </div>
+              <details class="env-section" data-section="wind">
+                <summary class="group-header">Wind</summary>
+                <div class="group-header" data-tip="One wind for the whole scene, in world units per second. It drifts the cloud deck at exactly this rate and everything else scales off it: the trees and bushes bend, the rain slants, and the ripple pattern marches across open water. Rivers ignore it — their direction is their channel's. Around 3–4 is where the sway reads clearly; below about 1 the scene looks still.">Speed</div>
+                <div class="slider-row">
+                  <input type="range" id="wind-speed" min="0" max="8" step="0.2" value="3.4" autocomplete="off" />
+                  <span class="slider-value" id="wind-speed-value">3.4</span>
+                </div>
+                <div class="group-header" data-tip="The heading the wind blows toward, not the one it comes from. Turns the clouds, the rain slant, the way plants lean, and the drift of the water all together.">Direction</div>
+                <div class="slider-row">
+                  <input type="range" id="wind-dir" min="0" max="355" step="5" value="30" autocomplete="off" />
+                  <span class="slider-value" id="wind-dir-value">30°</span>
+                </div>
+                <div class="group-header" data-tip="How far gusts swing the wind either side of its sustained speed, on a roughly seven-second cycle. Gusts reach the plants and the rain but deliberately not the cloud deck — a whole overcast sky doesn't surge in a two-second squall — and they travel across the map as a wave, so you watch one cross a wood tree by tree rather than every tree leaning at once. It is a percentage of the speed above, so at a low wind it has little to work with.">Gusts</div>
+                <div class="slider-row">
+                  <input type="range" id="wind-gust" min="0" max="100" step="5" value="35" autocomplete="off" />
+                  <span class="slider-value" id="wind-gust-value">35%</span>
+                </div>
+              </details>
 
-              <div class="group-header" data-tip="Snow accumulates where it is cold enough and liquids freeze at their own freeze point. Continental scales the season by latitude and elevation, so winter arrives up the map; whole map turns everywhere at once, for a map that is one region. Days per year sets how many day/night cycles one year takes.">Seasons</div>
-              <label class="toggle-row">
-                <span>Enable seasons</span>
-                <input type="checkbox" id="seasons-enable" autocomplete="off" />
-              </label>
-              <div class="segmented" id="season-scope-group">
-                <button class="scatter-type-btn active" data-season-scope="continental" title="The map spans a range of climates — the snowline descends it, peaks turn first">Continental</button>
-                <button class="scatter-type-btn"        data-season-scope="local" title="The map is one place — the whole of it turns together">Whole map</button>
-              </div>
-              <div class="slider-row">
-                <input type="range" id="season-phase" min="0" max="100" step="1" value="50" autocomplete="off" />
-                <span class="slider-value" id="season-phase-value">midsummer</span>
-              </div>
-              <div class="option-list" id="season-preset-group">
-                <button data-season="0">Winter</button>
-                <button data-season="0.25">Spring</button>
-                <button class="active" data-season="0.5">Summer</button>
-                <button data-season="0.75">Autumn</button>
-              </div>
-              <label class="toggle-row">
-                <span>Animate year</span>
-                <input type="checkbox" id="season-animate" autocomplete="off" />
-              </label>
-              <div class="slider-row">
-                <input type="range" id="season-days" min="2" max="24" step="1" value="8" autocomplete="off" />
-                <span class="slider-value" id="season-days-value">8 days</span>
-              </div>
+              <details class="env-section" data-section="texture">
+                <summary class="group-header" data-tip="Fine procedural mottling on the trees, bushes and rocks. Flat-shaded low-poly plants sit next to ground that carries real texture, and a large facet of one solid colour reads as plastic beside it — this varies the brightness on a scale finer than a facet, so each plane stops being perfectly uniform while its edges stay as crisp as they were. It is not a lighting change and does not soften the low-poly look. The number is peak-to-peak brightness swing, so 18% is about ±9%. 0 switches it off; the top of the range is there for judging the effect rather than shipping at it — somewhere past 30% a canopy stops reading as leaves and starts reading as mould.">Scatter texture</summary>
+                <div class="slider-row">
+                  <input type="range" id="scatter-texture" min="0" max="80" step="2" value="18" autocomplete="off" />
+                  <span class="slider-value" id="scatter-texture-value">18%</span>
+                </div>
+              </details>
+
+              <details class="env-section" data-section="seasons">
+                <summary class="group-header" data-tip="Snow accumulates where it is cold enough and liquids freeze at their own freeze point. Continental scales the season by latitude and elevation, so winter arrives up the map; whole map turns everywhere at once, for a map that is one region. Days per year sets how many day/night cycles one year takes.">Seasons</summary>
+                <label class="toggle-row">
+                  <span>Enable seasons</span>
+                  <input type="checkbox" id="seasons-enable" autocomplete="off" />
+                </label>
+                <div class="segmented" id="season-scope-group">
+                  <button class="scatter-type-btn active" data-season-scope="continental" title="The map spans a range of climates — the snowline descends it, peaks turn first">Continental</button>
+                  <button class="scatter-type-btn"        data-season-scope="local" title="The map is one place — the whole of it turns together">Whole map</button>
+                </div>
+                <div class="slider-row">
+                  <input type="range" id="season-phase" min="0" max="100" step="1" value="50" autocomplete="off" />
+                  <span class="slider-value" id="season-phase-value">midsummer</span>
+                </div>
+                <div class="option-list" id="season-preset-group">
+                  <button data-season="0">Winter</button>
+                  <button data-season="0.25">Spring</button>
+                  <button class="active" data-season="0.5">Summer</button>
+                  <button data-season="0.75">Autumn</button>
+                </div>
+                <label class="toggle-row">
+                  <span>Animate year</span>
+                  <input type="checkbox" id="season-animate" autocomplete="off" />
+                </label>
+                <div class="slider-row">
+                  <input type="range" id="season-days" min="2" max="24" step="1" value="8" autocomplete="off" />
+                  <span class="slider-value" id="season-days-value">8 days</span>
+                </div>
+              </details>
             </div>
 
-            <div id="territory-options" class="tool-panel hidden">
-              <div class="group-header">Faction</div>
+            <div id="territory-options" class="tool-panel tool-panel--floored hidden">
+              <div class="group-header" data-tip="Alt+click samples the faction under the cursor. Right-click releases what a left click would claim.">Faction</div>
               <div id="faction-group" class="option-list">
-                <!-- populated by renderFactionPalette() in main.ts -->
+                <!-- populated by TerritoryTool.refreshPalette() -->
               </div>
               <div class="group-header">Mode</div>
               <div class="segmented" id="territory-mode-group">
                 <button class="scatter-type-btn active" data-territory-mode="claim" title="Claim cells for the selected faction">Claim</button>
                 <button class="scatter-type-btn" data-territory-mode="release" title="Return cells to no-one">Release</button>
               </div>
-              <div class="group-header">Brush</div>
-              <div class="brush-group" id="territory-brush-group">
-                <button class="brush-btn active" data-brush="0" title="1 cell"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"  fill="currentColor"/></svg></button>
-                <button class="brush-btn"        data-brush="1" title="7 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"  fill="currentColor"/></svg></button>
-                <button class="brush-btn"        data-brush="2" title="19 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"  fill="currentColor"/></svg></button>
-                <button class="brush-btn"        data-brush="3" title="37 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="currentColor"/></svg></button>
+              <div class="group-header" data-tip="Brush claims under the cursor. Fill claims the connected region under the click, out to the borders ticked below — a whole valley between two rivers in one click.">Apply with</div>
+              <div class="segmented" id="territory-scope-group">
+                <button class="scatter-type-btn active" data-territory-scope="brush" title="Apply under the brush">Brush</button>
+                <button class="scatter-type-btn" data-territory-scope="fill" title="Apply across the bounded region under the click">Fill</button>
               </div>
-              <div class="group-header">All cells</div>
+              <div id="territory-brush-section">
+                <div class="group-header">Brush</div>
+                <div class="brush-group" id="territory-brush-group">
+                  <button class="brush-btn active" data-brush="0" title="1 cell"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"  fill="currentColor"/></svg></button>
+                  <button class="brush-btn"        data-brush="1" title="7 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"  fill="currentColor"/></svg></button>
+                  <button class="brush-btn"        data-brush="2" title="19 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"  fill="currentColor"/></svg></button>
+                  <button class="brush-btn"        data-brush="3" title="37 cells"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="currentColor"/></svg></button>
+                </div>
+              </div>
+              <div class="group-header" data-tip="What a fill or a grow will not cross: river cells, road cells, water, and cells another faction already holds. Untick one to let the claim run over it.">Stop at</div>
+              <label class="toggle-row"><span>Rivers</span><input type="checkbox" id="territory-stop-rivers" checked /></label>
+              <label class="toggle-row"><span>Roads</span><input type="checkbox" id="territory-stop-roads" checked /></label>
+              <label class="toggle-row"><span>Coast</span><input type="checkbox" id="territory-stop-coast" checked /></label>
+              <label class="toggle-row"><span>Other factions</span><input type="checkbox" id="territory-stop-factions" checked /></label>
+              <div class="group-header">Selected faction</div>
+              <div class="option-list">
+                <button id="territory-grow" title="Claim one ring of cells around everything the faction holds, stopping at the borders ticked above">Grow by one ring</button>
+                <button id="territory-transfer-selection" title="Give every selected cell to the faction">Transfer selection</button>
+              </div>
+              <div class="group-header group-header--floor">All cells</div>
               <div class="option-list">
                 <button id="territory-clear-faction">Clear faction</button>
                 <button id="territory-clear-all">Clear all</button>
               </div>
             </div>
 
-            <div id="resource-options" class="tool-panel hidden">
-              <div class="group-header">Resource</div>
+            <div id="resource-options" class="tool-panel tool-panel--floored hidden">
+              <div class="group-header" data-tip="Alt+click samples the resource under the cursor. With rules on, the status strip says which rule refuses the cell under the cursor.">Resource</div>
               <div id="resource-group" class="option-list">
-                <!-- populated by renderResourcePalette() in main.ts -->
+                <!-- populated by ResourceTool.refreshPalette() -->
               </div>
               <div class="group-header">Mode</div>
               <div class="segmented" id="resource-mode-group">
@@ -695,15 +773,27 @@
                 <span class="tip-host" data-tip="Rules come from each type's descriptor — terrain, elevation, river, and coast requirements. Turn them off to place anywhere.">Respect placement rules</span>
                 <input type="checkbox" id="resource-rules" checked />
               </label>
-              <div class="group-header">All cells</div>
+              <label class="toggle-row">
+                <span class="tip-host" data-tip="Tint every cell the chosen resource's rules allow, so you can see where it can go before painting. Follows the palette pick and updates as the map changes; shows only while this tool is active.">Highlight eligible cells</span>
+                <input type="checkbox" id="resource-highlight" />
+              </label>
+              <div class="group-header" data-tip="Place the chosen resource on randomly picked cells of the selection — or the whole map with nothing selected. Cells already holding a resource are skipped; with rules on, so are cells the rules refuse and cells within the type's minimum spacing of another deposit.">Scatter</div>
+              <div class="field">
+                <span>How many</span>
+                <input type="number" id="resource-scatter-count" value="10" min="1" max="10000" autocomplete="off" />
+              </div>
+              <div class="option-list option-list--single">
+                <button id="resource-scatter-btn" title="Place that many at random across the selection, or the whole map with nothing selected">Scatter in selection</button>
+              </div>
+              <div class="group-header group-header--floor">All cells</div>
               <div class="option-list">
                 <button id="resource-clear-type">Clear type</button>
                 <button id="resource-clear-all">Clear all</button>
               </div>
             </div>
 
-            <div id="unit-options" class="tool-panel hidden">
-              <div class="group-header" data-tip="One unit per cell. Ships place on water, everything else on land. Units save with the map.">Unit type</div>
+            <div id="unit-options" class="tool-panel tool-panel--floored hidden">
+              <div class="group-header" data-tip="One unit per cell. Ships place on water, everything else on land. Units and ports save with the map.">Unit type</div>
               <div id="unit-type-group" class="option-list">
                 <!-- populated by UnitTool -->
               </div>
@@ -715,14 +805,16 @@
               <div class="segmented" id="unit-mode-group">
                 <button class="scatter-type-btn active" data-unit-mode="place" title="Place the selected unit">Place</button>
                 <button class="scatter-type-btn" data-unit-mode="erase" title="Remove any unit">Erase</button>
+                <button class="scatter-type-btn" data-unit-mode="port" title="Toggle a dock on a shore cell — where ships put in and land units embark">Port</button>
               </div>
-              <div class="group-header">All cells</div>
+              <div class="group-header group-header--floor">All cells</div>
               <div class="option-list option-list--single">
                 <button id="unit-clear-all">Clear all units</button>
+                <button id="unit-clear-ports">Clear all ports</button>
               </div>
             </div>
 
-            <div id="fog-options" class="tool-panel hidden">
+            <div id="fog-options" class="tool-panel tool-panel--floored hidden">
               <label class="toggle-row">
                 <span class="tip-host" data-tip="Off by default so the whole map stays visible while editing.">Fog of war</span>
                 <input type="checkbox" id="fog-enable" />
@@ -748,7 +840,7 @@
                 <span>Dim remembered</span>
                 <input type="checkbox" id="fog-dim-explored" checked />
               </label>
-              <div class="group-header">All cells</div>
+              <div class="group-header group-header--floor">All cells</div>
               <div class="option-list">
                 <button id="fog-reveal-all">Reveal all</button>
                 <button id="fog-clear-all">Forget all</button>
@@ -806,6 +898,24 @@
             </div>
             <div id="terrains-list" class="stat-list">
               <!-- populated by terrainStatsPanel.ts -->
+            </div>
+          </div>
+          <div class="panel hidden" id="holdings-panel">
+            <div class="panel-head">
+              <div class="panel-title" title="Cells each faction holds. Click a row to select them all; Shift adds, Alt removes.">Holdings</div>
+              <div class="badge" id="holdings-count">0% claimed</div>
+            </div>
+            <div id="holdings-list" class="stat-list">
+              <!-- populated by territoryStatsPanel.ts -->
+            </div>
+          </div>
+          <div class="panel hidden" id="resource-stats-panel">
+            <div class="panel-head">
+              <div class="panel-title" title="Cells holding each resource type. Click a row to select them all; Shift adds, Alt removes.">Resources</div>
+              <div class="badge" id="resource-stats-count">0 placed</div>
+            </div>
+            <div id="resource-stats-list" class="stat-list">
+              <!-- populated by resourceStatsPanel.ts -->
             </div>
           </div>
           <div class="panel" id="inspector-panel">
@@ -950,10 +1060,26 @@
         <div id="river-audit-summary" class="audit-summary">—</div>
         <label class="field">
           <span>Sources should sit at or above elevation</span>
-          <input type="number" id="river-audit-min-source" value="2" min="-128" max="127" autocomplete="off" />
+          <input type="number" id="river-audit-threshold" value="2" min="-128" max="127" autocomplete="off" />
         </label>
         <div id="river-audit-list" class="audit-list"></div>
         <button class="wiz-btn" id="river-audit-rerun-btn">Check again</button>
+      </div>
+    </dialog>
+
+    <dialog id="road-audit-dialog">
+      <div class="dialog-header">
+        <span class="dialog-title">Road Check</span>
+        <button class="dialog-close" id="road-audit-close-btn">&#x2715;</button>
+      </div>
+      <div class="dialog-body">
+        <div id="road-audit-summary" class="audit-summary">—</div>
+        <label class="field">
+          <span>Spurs and fragments are short below</span>
+          <input type="number" id="road-audit-threshold" value="3" min="1" max="99" autocomplete="off" />
+        </label>
+        <div id="road-audit-list" class="audit-list"></div>
+        <button class="wiz-btn" id="road-audit-rerun-btn">Check again</button>
       </div>
     </dialog>
     <dialog id="liquid-dialog">
@@ -1050,6 +1176,92 @@
         <div class="dialog-btn-row">
           <button id="faction-apply-btn">Apply</button>
           <button id="faction-delete-btn" class="danger-btn">Delete&#8230;</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="scatter-dialog">
+      <div class="dialog-header">
+        <span class="dialog-title">Scatter Builder</span>
+        <button class="dialog-close" id="scatter-close-btn">&#x2715;</button>
+      </div>
+      <div class="dialog-body scatter-body">
+        <div class="scatter-list-col">
+          <div class="group-header">Scatter types</div>
+          <div id="scatter-list" class="option-list option-list--single"></div>
+          <div class="group-header">New from template</div>
+          <div class="color-row">
+            <select id="scatter-template"></select>
+            <button id="scatter-add-btn">Add</button>
+          </div>
+          <div class="dialog-btn-row">
+            <button id="scatter-dup-btn">Duplicate</button>
+            <button id="scatter-del-btn" class="danger-btn">Delete</button>
+          </div>
+        </div>
+        <div class="scatter-edit-col" id="scatter-edit">
+          <div class="scatter-preview-row">
+            <canvas id="scatter-preview" width="168" height="168"></canvas>
+            <div class="scatter-preview-fields">
+              <label class="field"><span>Name</span><input id="scatter-name" type="text" autocomplete="off" /></label>
+              <label class="field"><span>Layer <span class="field-hint">(the density channel it paints)</span></span><select id="scatter-layer"></select></label>
+              <div class="elev-range-row">
+                <label class="elev-range-label">Height<input type="number" id="scatter-height" step="0.1" min="0.1" autocomplete="off" /></label>
+                <label class="elev-range-label">Tilt<input type="number" id="scatter-tilt" step="0.05" min="0" max="1" autocomplete="off" /></label>
+                <label class="elev-range-label">Y offset<input type="number" id="scatter-yoffset" step="0.01" autocomplete="off" /></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="group-header" data-tip="Primitive parts merged into one shape. Sizes are proportions — the whole shape is fitted to Height.">Parts</div>
+          <div id="scatter-parts"></div>
+          <div class="option-list option-list--single"><button id="scatter-part-add">Add part</button></div>
+
+          <div class="group-header" data-tip="Scale of the shape a dense, medium, and sparse cell draws. Density level 1 only ever draws the sparse size.">Size by density</div>
+          <div class="elev-range-row">
+            <label class="elev-range-label">Dense<input type="number" id="scatter-scale-0" step="0.05" min="0.05" autocomplete="off" /></label>
+            <label class="elev-range-label">Medium<input type="number" id="scatter-scale-1" step="0.05" min="0.05" autocomplete="off" /></label>
+            <label class="elev-range-label">Sparse<input type="number" id="scatter-scale-2" step="0.05" min="0.05" autocomplete="off" /></label>
+          </div>
+          <label class="field">
+            <span>Density curve <span class="field-hint">(share of a cell's seven slots filled: default 40/60/80%)</span></span>
+            <select id="scatter-curve">
+              <option value="default">Default</option>
+              <option value="thin">Thin — half as many</option>
+              <option value="thick">Thick — nearly every slot</option>
+            </select>
+          </label>
+
+          <div class="group-header">Placement</div>
+          <div class="field">
+            <span>Allowed terrain <span class="field-hint">(none active = all)</span></span>
+            <div id="scatter-terrains" class="terrain-filter-group"></div>
+          </div>
+          <div class="field">
+            <span>Elevation <span class="field-hint">(blank = unlimited)</span></span>
+            <div class="elev-range-row">
+              <label class="elev-range-label">Min<input type="number" id="scatter-elev-min" min="-128" max="127" autocomplete="off" /></label>
+              <label class="elev-range-label">Max<input type="number" id="scatter-elev-max" min="-128" max="127" autocomplete="off" /></label>
+            </div>
+          </div>
+          <label class="toggle-row"><span>Shore only</span><input type="checkbox" id="scatter-shore" autocomplete="off" /></label>
+          <label class="toggle-row"><span>Avoid rivers</span><input type="checkbox" id="scatter-avoid-rivers" autocomplete="off" /></label>
+
+          <div class="group-header">Behaviour</div>
+          <label class="toggle-row"><span>Bends in the wind</span><input type="checkbox" id="scatter-wind" autocomplete="off" /></label>
+          <div class="elev-range-row">
+            <label class="elev-range-label">Sway<input type="number" id="scatter-wind-amp" step="0.005" min="0" autocomplete="off" /></label>
+            <label class="elev-range-label">Stiffness<input type="number" id="scatter-wind-stiff" step="0.1" min="0.1" autocomplete="off" /></label>
+          </div>
+          <label class="toggle-row"><span>Turns with the seasons <span class="field-hint">(canopy parts)</span></span><input type="checkbox" id="scatter-seasons" autocomplete="off" /></label>
+          <div class="elev-range-row">
+            <label class="elev-range-label">Blossom<input type="number" id="scatter-blossom" step="0.1" min="0" max="1" autocomplete="off" /></label>
+            <label class="elev-range-label">Texture<input type="number" id="scatter-texture" step="0.1" min="0" max="1" autocomplete="off" /></label>
+            <label class="elev-range-label">Opacity<input type="number" id="scatter-opacity" step="0.05" min="0.05" max="1" autocomplete="off" /></label>
+          </div>
+          <label class="toggle-row"><span>Catches snow</span><input type="checkbox" id="scatter-snow" autocomplete="off" /></label>
+          <label class="toggle-row"><span>Stone <span class="field-hint">(strata-banded, squashed per instance)</span></span><input type="checkbox" id="scatter-rock" autocomplete="off" /></label>
+          <label class="toggle-row"><span>Two-sided <span class="field-hint">(fronds, flat leaves)</span></span><input type="checkbox" id="scatter-double" autocomplete="off" /></label>
         </div>
       </div>
     </dialog>

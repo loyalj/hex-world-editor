@@ -106,10 +106,21 @@ export function initWizard(opts: WizardOptions): WizardApi {
       width: plan.width, height: plan.height,
       featureLayerCount: opts.featureLayerCount,
     });
+    // The volcano pass wants terrain indices the schema cannot know: whichever
+    // lava and ash the palette carries right now, found by id so a re-indexed
+    // palette still lines up. Without them a volcano is a dry rock crater.
+    const defs   = opts.terrainDefinitions();
+    const lava   = defs.find(d => d.id === 'lava')?.index;
+    const ash    = defs.find(d => d.id === 'ash')?.index;
+    const config = {
+      ...(plan.config as Record<string, unknown>),
+      ...(lava !== undefined ? { volcanoLavaTerrain: lava } : {}),
+      ...(ash  !== undefined ? { volcanoAshTerrain:  ash  } : {}),
+    };
     const entry = {
       map: undefined as HexMap | undefined,
       promise: generatePluginAsync(
-        plugin as unknown as MapGeneratorPlugin<unknown>, map, plan.config, seed,
+        plugin as unknown as MapGeneratorPlugin<unknown>, map, config, seed,
         // 40ms slices: a full 100² map is only ~400ms of work, and every
         // yield hands the 3D scene a frame — pay that tax sparingly.
         { sliceMs: 40, onProgress: p => onProgress?.(p.progress) },

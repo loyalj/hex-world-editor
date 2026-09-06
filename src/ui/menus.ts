@@ -9,7 +9,7 @@ export interface MenusOptions {
 }
 
 /** The chrome panels View ▸ Panels shows and hides. */
-export type PanelId = 'drawer' | 'minimap' | 'inspector' | 'locks' | 'terrains';
+export type PanelId = 'drawer' | 'minimap' | 'inspector' | 'locks' | 'terrains' | 'holdings' | 'resources';
 
 export interface MenusApi {
   /** Show or hide a chrome panel, syncing its menu check and stored pref. */
@@ -100,6 +100,18 @@ export function initMenus(opts: MenusOptions): MenusApi {
       btn:   document.getElementById('toggle-terrains-btn')!,
       def:   false,
     },
+    holdings: {
+      el:    document.getElementById('holdings-panel')!,
+      check: document.getElementById('holdings-check')!,
+      btn:   document.getElementById('toggle-holdings-btn')!,
+      def:   false,
+    },
+    resources: {
+      el:    document.getElementById('resource-stats-panel')!,
+      check: document.getElementById('resource-stats-check')!,
+      btn:   document.getElementById('toggle-resource-stats-btn')!,
+      def:   false,
+    },
   };
   const panelOpen = {} as Record<PanelId, boolean>;
 
@@ -111,7 +123,8 @@ export function initMenus(opts: MenusOptions): MenusApi {
     storeUiPref(`panel:${id}`, visible);
     // With every right-column panel off, the empty column gives its width back.
     rightPanel.classList.toggle('hidden',
-      !panelOpen.minimap && !panelOpen.inspector && !panelOpen.locks && !panelOpen.terrains);
+      !panelOpen.minimap && !panelOpen.inspector && !panelOpen.locks
+      && !panelOpen.terrains && !panelOpen.holdings && !panelOpen.resources);
     opts.onPanelToggle?.(id, visible);
   }
 
@@ -137,6 +150,7 @@ export function initMenus(opts: MenusOptions): MenusApi {
   wireToggle('toggle-contours-btn', 'contours-check', false, on => scene.setContourLines(on));
   wireToggle('toggle-riverflow-btn', 'riverflow-check', false, on => scene.setRiverFlowOverlay(on));
   wireToggle('toggle-basins-btn',    'basins-check',    false, on => scene.setDrainageBasins(on));
+  wireToggle('toggle-roadnets-btn',  'roadnets-check',  false, on => scene.setRoadNetworks(on));
   wireToggle('toggle-shadows-btn', 'shadows-check', true,  on => scene.setShadows(on));
   wireToggle('toggle-sky-btn',     'sky-check',     true,  on => scene.setSky(on));
   wireToggle('toggle-godrays-btn', 'godrays-check', true,  on => scene.setGodRays(on));

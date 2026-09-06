@@ -61,6 +61,8 @@ export function makeScene(width = 12, height = 12) {
     },
     selectionPreviews: [] as unknown[],
     setSelectionPreview(cells: unknown) { s.selectionPreviews.push(cells); },
+    resourceHighlights: [] as unknown[],
+    setResourceHighlight(cells: unknown) { s.resourceHighlights.push(cells); },
     territory: null as unknown,
     resources: null as unknown,
     factions: [] as unknown[],

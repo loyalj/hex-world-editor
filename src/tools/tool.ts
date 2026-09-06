@@ -17,8 +17,11 @@ export interface ToolContext {
   scene: SceneApi;
   /** Push a finished MapEdit into the undo history (no-op for empty edits). */
   commitEdit(edit: MapEdit): void;
-  /** Repaint the minimap after a mutation that hasn't reached the history yet. */
-  minimapInvalidate(): void;
+  /**
+   * Repaint the minimap after a mutation that hasn't reached the history yet.
+   * With `cells`, only the pixels under those cells; without, the whole map.
+   */
+  minimapInvalidate(cells?: Iterable<CellPos>): void;
   /** Push the active tool's brush radius into the scene's hover footprint. */
   syncBrushRadius(): void;
   /** Re-evaluate the viewport cursor (fill mode, etc.). */
@@ -64,11 +67,19 @@ export interface Tool {
    * {@link brushRadius} (rings, sprays). Absent, the scene draws the hex.
    */
   hoverFootprint?(cell: CellPos): CellPos[];
+  /** The tool just became the active one — refresh anything that went stale while it was hidden. */
+  activate?(): void;
   /** Reset transient state (previews, part-done gestures) when switched away. */
   deactivate(): void;
 
   /** Left-button press on a map cell. */
   pointerDown(cell: CellPos, e: PointerEvent): void;
+  /**
+   * A stationary right click on a cell. A right-drag is the camera's rotate
+   * gesture, so the manager resolves the click at release; tools without
+   * this get no right-click behaviour at all.
+   */
+  rightClick?(cell: CellPos, e: PointerEvent): void;
   pointerMove(cell: CellPos | null, e: PointerEvent): void;
   pointerUp(): void;
   doubleClick?(): void;

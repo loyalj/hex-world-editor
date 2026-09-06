@@ -1,4 +1,4 @@
-import { DEFAULT_TERRAIN_DESCRIPTORS, DEFAULT_LIQUID_DESCRIPTORS } from '@loyalj/hex-world';
+import { DEFAULT_TERRAIN_DESCRIPTORS, DEFAULT_LIQUID_DESCRIPTORS, VOLCANIC_ASH_TERRAIN_DESCRIPTOR } from '@loyalj/hex-world';
 import type { TerrainDescriptor, TerrainAssetRegistry, LiquidTypeDescriptor } from '@loyalj/hex-world';
 import { wireOptionGroup } from './uiHelpers.ts';
 import { renderSwatchPreviews, styleChip } from './swatchPreviews.ts';
@@ -18,6 +18,9 @@ export const EDITOR_DEFAULT_TERRAINS: TerrainDescriptor[] = [
     liquidType: 'lava', roadCost: 1, texture: { type: 'procedural' } },
   { index: 8, id: 'acid', name: 'Acid', color: 0x4db318,
     liquidType: 'acid', roadCost: 1, texture: { type: 'procedural' } },
+  // Volcanic ash (10): what the Chunk generator's volcanoes leave on their
+  // slopes — and the wizard hands its index to that pass by this id.
+  VOLCANIC_ASH_TERRAIN_DESCRIPTOR,
 ];
 
 export interface PaletteOptions {

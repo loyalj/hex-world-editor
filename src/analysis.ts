@@ -135,6 +135,16 @@ export function basinColor(index: number): number {
   return hslToRgb(h / 360, 0.65, 0.55);
 }
 
+/**
+ * A distinct hue per road network, on the same golden-angle wheel as basins
+ * but offset half a turn and lighter, so a road and a river sharing a cell
+ * don't collapse into one tint when both overlays are on.
+ */
+export function roadNetworkColor(index: number): number {
+  const h = (180 + index * 137.508) % 360;
+  return hslToRgb(h / 360, 0.75, 0.65);
+}
+
 function hslToRgb(h: number, s: number, l: number): number {
   const k = (n: number): number => (n + h * 12) % 12;
   const a = s * Math.min(l, 1 - l);

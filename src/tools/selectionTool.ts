@@ -1,8 +1,11 @@
-import { hexRange, hexToWorld, offsetToHex, hexToOffset } from '@loyalj/hex-world';
+import { hexToWorld, offsetToHex, hexToOffset } from '@loyalj/hex-world';
 import { floodRegion, hexLineDraw } from './hexPath.ts';
 import { selectionOpFor } from '../selection.ts';
 import type { SelectionOp } from '../selection.ts';
-import { wireBrushGroup, wireOptionGroup } from '../ui/uiHelpers.ts';
+import { wireOptionGroup } from '../ui/uiHelpers.ts';
+import { wireBrushControls } from '../ui/brushControls.ts';
+import type { BrushControls } from '../ui/brushControls.ts';
+import { BRUSH_SHAPE_LABELS, brushFootprint, brushReach, expectedCells, solidCells } from './brushFootprint.ts';
 import type { CellPos, Tool, ToolContext, ToolId } from './tool.ts';
 
 type SelectMode = 'pointer' | 'wand' | 'rect' | 'lasso';
@@ -12,11 +15,13 @@ type MarqueeShape = 'rectangle' | 'circle' | 'hexagon' | 'triangle';
 /**
  * Builds the selection mask — and only that: this tool never edits the map.
  * Four sub-tools share the modifier convention (Shift adds, Alt subtracts,
- * plain click replaces): a pointer that clicks or drag-paints cells, a magic
- * wand matching the clicked cell's terrain or elevation (contiguous region or
+ * plain click replaces): a pointer that clicks or drag-paints cells with the
+ * stamp tools' brush (solid, ring, or spray at any radius), a magic wand
+ * matching the clicked cell's terrain or elevation (contiguous region or
  * map-wide, with an elevation tolerance), a drag-marquee (rectangle, circle,
- * hexagon, or triangle inscribed in the dragged box), and a freehand lasso. Esc cancels a drag in progress, or clears the selection. The
- * selection survives tool switches — it exists to constrain the other tools.
+ * hexagon, or triangle inscribed in the dragged box), and a freehand lasso.
+ * Esc cancels a drag in progress, or clears the selection. The selection
+ * survives tool switches — it exists to constrain the other tools.
  */
 export class SelectionTool implements Tool {
   readonly id: ToolId = 'select';
@@ -29,8 +34,10 @@ export class SelectionTool implements Tool {
 
   private readonly ctx: ToolContext;
   private mode: SelectMode = 'pointer';
-  /** Pointer-mode brush radius (0 = single cell) — other modes ignore it. */
-  private pointerRadius = 0;
+  /** Pointer-mode brush shape and size — other modes ignore it. */
+  private readonly brush: BrushControls;
+  /** Source of the spray's per-cell rolls; tests swap in a deterministic one. */
+  protected rng: () => number = Math.random;
   /** Rect-mode marquee shape, inscribed in the dragged box. */
   private marqueeShape: MarqueeShape = 'rectangle';
   private wandMatch: WandMatch = 'terrain';
@@ -74,10 +81,7 @@ export class SelectionTool implements Tool {
       ctx.syncBrushRadius();
       ctx.updateCursor();
     });
-    wireBrushGroup('selection-brush-group', radius => {
-      this.pointerRadius = radius;
-      ctx.syncBrushRadius();
-    });
+    this.brush = wireBrushControls('selection', () => ctx.syncBrushRadius());
     wireOptionGroup('#rect-shape-group .brush-btn', btn => {
       this.marqueeShape = btn.dataset['marqueeShape'] as MarqueeShape;
     });
@@ -107,12 +111,29 @@ export class SelectionTool implements Tool {
       .addEventListener('click', () => sel().grow(map().width, map().height));
     (document.getElementById('selection-shrink-btn') as HTMLButtonElement)
       .addEventListener('click', () => sel().shrink(map().width, map().height));
+    (document.getElementById('selection-border-btn') as HTMLButtonElement)
+      .addEventListener('click', () => sel().border(map().width, map().height));
     (document.getElementById('selection-clear-btn') as HTMLButtonElement)
       .addEventListener('click', () => sel().clear());
   }
 
-  brushRadius(): number { return this.mode === 'pointer' ? this.pointerRadius : 0; }
+  brushRadius(): number { return this.mode === 'pointer' ? this.brush.settings.radius : 0; }
   wantsFillCursor(): boolean { return this.mode === 'wand'; }
+
+  /** The hover outline follows the shape: a ring shows only its band. */
+  hoverFootprint(cell: CellPos): CellPos[] {
+    return this.mode === 'pointer' ? brushReach(cell, this.brush.settings) : [cell];
+  }
+
+  /**
+   * A stationary right click acts as Alt+click — subtract, or Shift+right
+   * for Shift+Alt — through the normal pointer path so every sub-tool treats
+   * it exactly as the modifier would.
+   */
+  rightClick(cell: CellPos, e: PointerEvent): void {
+    this.pointerDown(cell, new PointerEvent('pointerdown', { altKey: true, shiftKey: e.shiftKey }));
+    this.pointerUp();
+  }
 
   pointerDown(cell: CellPos, e: PointerEvent): void {
     const op = selectionOpFor(e);
@@ -204,6 +225,7 @@ export class SelectionTool implements Tool {
   }
 
   keyDown(e: KeyboardEvent): boolean {
+    if (this.mode === 'pointer' && !this.dragging && this.brush.keyDown(e)) return true;
     if (e.key !== 'Escape') return false;
     if (this.dragging) {
       this.cancelDrag();
@@ -270,13 +292,21 @@ export class SelectionTool implements Tool {
     this.ctx.scene.setSelectionPreview(cells, this.dragOp === 'subtract');
   }
 
-  /** The pointer brush's cells around a center, clipped to the map. */
+  /**
+   * The pointer brush's cells around a center, clipped to the map. A spray's
+   * fractional weights roll here, once per stamp — the stroke has no visited
+   * set, so dragging back over a sprayed patch can fill it in, which is what
+   * a spray *selection* should do.
+   */
   private footprint(cell: CellPos): CellPos[] {
-    if (this.pointerRadius === 0) return [cell];
     const { map } = this.ctx.scene;
-    return hexRange(offsetToHex(cell.col, cell.row), this.pointerRadius)
-      .map(hexToOffset)
-      .filter(c => map.inBounds(c.col, c.row));
+    const out: CellPos[] = [];
+    for (const { col, row, weight } of brushFootprint(cell, this.brush.settings)) {
+      if (!map.inBounds(col, row)) continue;
+      if (weight < 1 && this.rng() >= weight) continue;
+      out.push({ col, row });
+    }
+    return out;
   }
 
   private wandRegion(cell: CellPos): CellPos[] {
@@ -448,7 +478,14 @@ export class SelectionTool implements Tool {
       ? ` · wand would ${this.wandHoverSubtract ? 'remove' : 'select'} ${this.wandHoverCount}`
       : '';
     const lock = this.mode === 'rect' ? ' · Ctrl locks 1:1' : '';
-    return `${count}${wand} · Shift adds · Alt removes · Shift+Alt intersects${lock}`;
+    let brush = '';
+    if (this.mode === 'pointer') {
+      const { settings } = this.brush;
+      const n = expectedCells(settings);
+      const cells = settings.shape === 'spray' ? `~${n} of ${solidCells(settings.radius)}` : String(n);
+      brush = ` · ${BRUSH_SHAPE_LABELS[settings.shape]} ${cells}`;
+    }
+    return `${count}${wand}${brush} · Shift adds · Alt removes · Shift+Alt intersects${lock}`;
   }
 }
 
